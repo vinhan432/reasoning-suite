@@ -13,6 +13,7 @@
     "agent"
   ],
   "license": "MIT",
+  "author": "vinhan432 <vinhan2k13@gmail.com>",
   "type": "commonjs",
   "engines": {
     "node": ">=18"
@@ -36,10 +37,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/reasoning-suite.git"
+    "url": "git+https://github.com/vinhan432/reasoning-suite.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/reasoning-suite/issues"
+    "url": "https://github.com/vinhan432/reasoning-suite/issues"
   },
-  "homepage": "https://github.com/OWNER/reasoning-suite#readme"
+  "homepage": "https://github.com/vinhan432/reasoning-suite#readme"
 }
