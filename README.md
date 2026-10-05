@@ -30,12 +30,20 @@ Useful flags: `install --dir <skills-root>` (other agent, other layout),
 `install --only 1-general,2-debug`, `install --force` (overwrite), `install --dry-run`,
 `visualizer --port 8081 --no-open`, `tree validate -` (read stdin), `tree validate <file> --json`.
 
-If the package is not published yet, the same CLI runs straight from git or a tarball:
+Not on npm yet? Fetch it from the repo. npm 12 blocks git and remote-tarball fetches by
+default (`allow-git = none`, `allow-remote = none`), so either pass the flag for one run
+or allow it once:
 
 ```bash
-npx --yes github:<you>/reasoning-suite install      # after you push the repo
-npx --yes ./reasoning-suite-1.0.0.tgz install       # from a local npm pack
-npx --yes . install                                 # from a checkout (or: npm link && npx reasoning-suite install)
+npx --yes --allow-git=all github:vinhan432/reasoning-suite install   # one run, from the repo
+npm config set allow-git all                                        # or allow it permanently
+
+git clone --depth 1 https://github.com/vinhan432/reasoning-suite.git
+npx --yes ./reasoning-suite install          # local checkout - no flags needed
+npm pack && npx --yes ./reasoning-suite-1.0.0.tgz install   # local tarball
+
+npx --yes --allow-remote=all \
+  https://github.com/vinhan432/reasoning-suite/archive/refs/heads/main.tar.gz install
 ```
 
 `tree validate` prints one line per problem as `path - message [rule]`, then the node
