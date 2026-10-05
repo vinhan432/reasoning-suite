@@ -1,0 +1,45 @@
+{
+  "name": "reasoning-suite",
+  "version": "1.0.0",
+  "description": "Teach an AI model to reason root -> branch -> leaf with an upward verification pass, plus an offline visualizer for the tree-json it emits.",
+  "keywords": [
+    "ai-skills",
+    "reasoning",
+    "prompt-engineering",
+    "skills",
+    "tree-json",
+    "visualizer",
+    "claude",
+    "agent"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "reasoning-suite": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "1-general/",
+    "2-debug/",
+    "3-code/",
+    "4-web/",
+    "tree.schema.json",
+    "visualizer/",
+    "README.md",
+    "TEST-PLAN.md"
+  ],
+  "scripts": {
+    "test": "node bin/cli.js tree validate visualizer/examples/general.json && node bin/cli.js tree validate visualizer/examples/debug.json && node bin/cli.js tree validate visualizer/examples/code.json && node bin/cli.js tree validate visualizer/examples/web.json && node bin/cli.js tree validate 1-general/SKILL.md"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/reasoning-suite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/reasoning-suite/issues"
+  },
+  "homepage": "https://github.com/OWNER/reasoning-suite#readme"
+}

@@ -13,3 +13,7 @@ __pycache__/
 # local screenshots / scratch
 .shot-*.png
 scratch/
+
+# npm pack output
+*.tgz
+package-lock.json

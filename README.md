@@ -17,6 +17,30 @@ reasoning-suite/
 Every skill emits one fenced `tree-json` block after the prose answer; the visualizer
 parses, validates, renders, plays and edits that tree.
 
+## 0. Install with npx (fastest)
+The package ships one CLI with three commands and no dependencies (Node >= 18):
+
+```bash
+npx reasoning-suite install        # copies the 4 skills + tree.schema.json into ~/.claude/skills
+npx reasoning-suite visualizer     # serves the viewer on http://127.0.0.1:8080
+npx reasoning-suite tree validate ./my-tree.json   # schema check, exit 1 when invalid
+```
+
+Useful flags: `install --dir <skills-root>` (other agent, other layout),
+`install --only 1-general,2-debug`, `install --force` (overwrite), `install --dry-run`,
+`visualizer --port 8081 --no-open`, `tree validate -` (read stdin), `tree validate <file> --json`.
+
+If the package is not published yet, the same CLI runs straight from git or a tarball:
+
+```bash
+npx --yes github:<you>/reasoning-suite install      # after you push the repo
+npx --yes ./reasoning-suite-1.0.0.tgz install       # from a local npm pack
+npx --yes . install                                 # from a checkout (or: npm link && npx reasoning-suite install)
+```
+
+`tree validate` prints one line per problem as `path - message [rule]`, then the node
+counts and the READY / NOT READY verdict - the same rules the visualizer enforces.
+
 ## 1. Install the skills
 1. Copy the four folders into the skills directory of your agent:
    - Claude Code / compatible: `~/.claude/skills/` (project-local: `.claude/skills/`)
