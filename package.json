@@ -12,7 +12,7 @@
     "claude",
     "agent"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "vinhan432 <vinhan2k13@gmail.com>",
   "type": "commonjs",
   "engines": {
