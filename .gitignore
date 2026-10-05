@@ -1,0 +1,15 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# tooling
+node_modules/
+__pycache__/
+*.pyc
+
+# local screenshots / scratch
+.shot-*.png
+scratch/

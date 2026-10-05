@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "domain": "general",
+  "title": "Ship the CSV export behind a feature flag?",
+  "root": {
+    "id": "r",
+    "text": "decide flag vs direct release for the CSV export",
+    "children": [
+      {
+        "id": "b1",
+        "text": "blast radius if the export is wrong",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "export reads rows only, never writes",
+            "evidence": "src/export.py:41 - no INSERT/UPDATE in the module",
+            "status": "verified"
+          },
+          {
+            "id": "b1-l2",
+            "text": "bad output is user-visible but recoverable by re-export",
+            "evidence": "manual: re-export after fix produced the correct file",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "cost of the feature flag",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "flag costs 2 files, 6 lines",
+            "evidence": "config/features.yaml + route guard diff (git show --stat)",
+            "status": "verified"
+          },
+          {
+            "id": "b2-l2",
+            "text": "rollback without deploy",
+            "evidence": "flag read per request; config reload observed in staging",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "current correctness evidence",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "export tests pass on the 3 existing fixtures",
+            "evidence": "pytest -q tests/test_export.py -> 3 passed",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "empty-table fixture added during the UP pass",
+            "evidence": "pytest -q tests/test_export.py -> test_empty_table passed",
+            "status": "verified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "does the leaf prove there are no writes?",
+      "result": "pass",
+      "note": "module read end to end"
+    },
+    {
+      "target": "b2-l1",
+      "question": "is the flag cost complete?",
+      "result": "pass",
+      "note": "diff measured, not estimated"
+    },
+    {
+      "target": "b3",
+      "question": "was the empty-table gap closed before concluding?",
+      "result": "pass",
+      "note": "fixture added and re-run during UP"
+    }
+  ],
+  "conclusion": "Ship behind the flag: 6 lines, instant rollback, and the empty-table gap was closed during the UP pass."
+}

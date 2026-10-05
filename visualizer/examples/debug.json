@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "domain": "debug",
+  "title": "test_cancel fails only in the full suite",
+  "root": {
+    "id": "r",
+    "text": "stop test_cancel failing in the full suite on CI (~2 of 10 runs)",
+    "children": [
+      {
+        "id": "b1",
+        "text": "test isolation / order dependency",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "order matters: test_a leaks a row into the session",
+            "evidence": "pytest test_a test_orders -> fails; reversed order -> passes",
+            "status": "verified"
+          },
+          {
+            "id": "b1-l2",
+            "text": "session-scoped db fixture is never reset",
+            "evidence": "conftest.py:12 scope=\"session\" with no teardown",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "xdist / version difference",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "B2 is dead: failure reproduces with xdist disabled",
+            "evidence": "pytest -p no:xdist full suite -> same assertion at line 44",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "fix: order-independent cleanup",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "cleanup added in test_a - suite still fails",
+            "evidence": "CI run 8412: 2 failed, same AssertionError at test_orders.py:44",
+            "status": "failed"
+          },
+          {
+            "id": "b3-l2",
+            "text": "function-scoped fixture rewrite still untested on CI",
+            "evidence": "patch prepared locally, not pushed",
+            "status": "unverified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "does order genuinely explain the failure?",
+      "result": "pass",
+      "note": "reproduced both orders"
+    },
+    {
+      "target": "b2-l1",
+      "question": "is parallelism ruled out?",
+      "result": "pass",
+      "note": "fails with xdist off"
+    },
+    {
+      "target": "b3-l1",
+      "question": "does the applied fix clear the repro?",
+      "result": "fail",
+      "note": "CI still red: cleanup in one test is not enough, the fixture itself leaks"
+    },
+    {
+      "target": "b3",
+      "question": "does any leaf explain the whole symptom?",
+      "result": "gap",
+      "note": "no leaf yet proves the fixture rewrite removes the failure"
+    }
+  ],
+  "conclusion": ""
+}

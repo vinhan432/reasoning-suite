@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tree.schema.json",
+  "title": "tree-json - reasoning tree",
+  "description": "Contract between the reasoning skills (Part A) and the visualizer (Part B). Emitted once per non-trivial reasoning run inside a fenced block tagged tree-json.",
+  "type": "object",
+  "required": ["version", "domain", "title", "root", "reverse_check", "conclusion"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "domain": { "enum": ["general", "debug", "code", "web"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "root": { "$ref": "#/$defs/node" },
+    "reverse_check": {
+      "type": "array",
+      "description": "One entry per checked branch or leaf boundary, in bottom-up order.",
+      "items": {
+        "type": "object",
+        "required": ["target", "question", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "target": { "type": "string", "minLength": 1, "description": "id of the node the check is about" },
+          "question": { "type": "string", "minLength": 1 },
+          "result": { "enum": ["pass", "fail", "gap"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "conclusion": {
+      "type": "string",
+      "description": "Final answer. Must stay empty while any reverse_check entry is fail or gap."
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "description": "Required on leaves: log line, test result, file:line, measurement, or explicit ASSUMPTION."
+        },
+        "status": {
+          "enum": ["verified", "unverified", "failed"],
+          "description": "Required on leaves. Never stored on root or branches: computed by the renderer."
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/node" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "not": { "required": ["children"] } },
+          "then": { "required": ["evidence", "status"] }
+        }
+      ]
+    }
+  }
+}

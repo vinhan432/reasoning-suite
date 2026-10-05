@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tree-json visualizer</title>
+  <meta name="description" content="Offline visualizer for tree-json reasoning trees: paste, validate, render, play DOWN/UP, edit, export.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#tree-area" data-i18n="skipToTree">Skip to tree</a>
+
+  <header class="topbar">
+    <h1 data-i18n="appTitle">tree-json visualizer</h1>
+
+    <div class="health" id="health" role="status" aria-live="polite">
+      <span class="verdict" id="verdict">-</span>
+      <span class="pill g" id="pill-verified"><span aria-hidden="true">&#10003;</span><span id="count-verified">0</span> <span data-i18n="verified">verified</span></span>
+      <span class="pill a" id="pill-unverified"><span aria-hidden="true">?</span><span id="count-unverified">0</span> <span data-i18n="unverified">unverified</span></span>
+      <span class="pill r" id="pill-failed"><span aria-hidden="true">&#10007;</span><span id="count-failed">0</span> <span data-i18n="failed">failed</span></span>
+      <span class="pill" id="pill-rc"><span id="count-rc">0</span> <span data-i18n="rcIssues">check fails/gaps</span></span>
+      <ul class="blocking" id="blocking" aria-label="Blocking nodes"></ul>
+    </div>
+
+    <div class="top-actions">
+      <label><span data-i18n="theme">Theme</span>
+        <select id="theme">
+          <option value="auto" data-i18n="themeAuto">Auto</option>
+          <option value="light" data-i18n="themeLight">Light</option>
+          <option value="dark" data-i18n="themeDark">Dark</option>
+        </select>
+      </label>
+      <label><span data-i18n="language">Language</span>
+        <select id="lang">
+          <option value="en">English</option>
+          <option value="vi">Tiếng Việt</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ---------- INPUT ---------- -->
+    <section class="panel input" aria-labelledby="input-h">
+      <h2 id="input-h" data-i18n="inputTitle">Input</h2>
+      <label class="visually-hidden" for="input" data-i18n="inputLabel">tree-json or markdown containing a tree-json block</label>
+      <textarea id="input" rows="12" spellcheck="false" data-i18n-ph="inputPlaceholder"></textarea>
+
+      <div class="row">
+        <button class="primary" id="btn-render" data-i18n="render">Render</button>
+        <button id="btn-upload" data-i18n="upload">Upload file</button>
+        <input type="file" id="file" accept=".json,.md,.txt,application/json" class="visually-hidden" aria-hidden="true" tabindex="-1">
+      </div>
+      <div class="row">
+        <label class="grow"><span class="visually-hidden" data-i18n="example">Example</span>
+          <select id="example">
+            <option value="" data-i18n="chooseExample">Load example...</option>
+            <option value="general">general - all green</option>
+            <option value="debug">debug - failed leaf</option>
+            <option value="code">code - reverse-check gap</option>
+            <option value="web">web - deeply nested</option>
+          </select>
+        </label>
+      </div>
+      <ul class="errors" id="errors" aria-live="polite"></ul>
+      <ul class="legend" id="legend">
+        <li><span aria-hidden="true">&#10003;</span> <span data-i18n="legendGreen">verified leaf / all children green</span></li>
+        <li><span aria-hidden="true">?</span> <span data-i18n="legendAmber">unverified leaf / mixed children</span></li>
+        <li><span aria-hidden="true">&#10007;</span> <span data-i18n="legendRed">failed leaf / any child red</span></li>
+        <li><span data-i18n="legendShape">Amber is dashed, red is dotted, so colour is never the only signal.</span></li>
+      </ul>
+      <p class="hint" data-i18n="privacyHint">Everything stays in this page: no network calls, no upload.</p>
+    </section>
+
+    <!-- ---------- TREE ---------- -->
+    <section class="panel tree" id="tree-area" aria-labelledby="tree-h">
+      <h2 class="visually-hidden" id="tree-h" data-i18n="treeTitle">Tree</h2>
+
+      <div class="toolbar" role="toolbar" aria-label="Tree controls">
+        <div class="group">
+          <button id="btn-down" data-i18n="modeDown">DOWN</button>
+          <button id="btn-up" data-i18n="modeUp">UP</button>
+          <button id="btn-show-all" data-i18n="showAll">Show all</button>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-play" data-i18n="play">Play</button>
+          <button id="btn-step-back" data-i18n="stepBack">Step -</button>
+          <button id="btn-step-fwd" data-i18n="stepForward">Step +</button>
+          <span class="badge" id="play-status">-</span>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <label class="hint" for="speed" data-i18n="speed">Speed</label>
+          <input type="range" id="speed" min="0.5" max="3" step="0.5" value="1">
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-zoom-out" aria-label="Zoom out">-</button>
+          <button id="btn-zoom-in" aria-label="Zoom in">+</button>
+          <button id="btn-fit" data-i18n="fit">Fit</button>
+          <span class="badge" id="zoom-badge">100%</span>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-expand" data-i18n="expandAll">Expand all</button>
+          <button id="btn-copy" data-i18n="copyJson">Copy JSON</button>
+          <button id="btn-download" data-i18n="downloadJson">Download JSON</button>
+          <button id="btn-svg" data-i18n="exportSvg">Export SVG</button>
+          <button id="btn-png" data-i18n="exportPng">Export PNG</button>
+        </div>
+      </div>
+
+      <svg id="svg" tabindex="0" role="tree" aria-label="Reasoning tree"></svg>
+      <p class="empty" id="empty" data-i18n="emptyState">Paste tree-json and press Render, or load an example.</p>
+    </section>
+
+    <!-- ---------- DETAILS ---------- -->
+    <aside class="panel details" id="details" aria-labelledby="details-h">
+      <h2 id="details-h" data-i18n="detailsTitle">Node details</h2>
+      <div id="details-body"><p class="hint" data-i18n="noSelection">Click a node to see its text, evidence, status and reverse checks.</p></div>
+    </aside>
+  </main>
+
+  <script src="examples/data.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

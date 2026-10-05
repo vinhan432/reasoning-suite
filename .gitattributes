@@ -1,0 +1,4 @@
+# Normalize line endings; the suite is authored LF-only.
+* text=auto eol=lf
+*.png binary
+*.webp binary

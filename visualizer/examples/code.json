@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "domain": "code",
+  "title": "CSV import endpoint",
+  "root": {
+    "id": "r",
+    "text": "add POST /import for order CSV files, meeting C1-C4",
+    "children": [
+      {
+        "id": "b1",
+        "text": "interface and error shape",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "responses match api/schemas.py conventions",
+            "evidence": "schema review against C1; 202 {job_id} on success",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "core parsing and persistence",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "5k-row fixture imports and row count matches",
+            "evidence": "pytest -q tests/test_import.py -k happy -> passed; DB count 5000",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "error and edge handling",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "missing file and wrong delimiter return 400 with row number",
+            "evidence": "test_missing_file, test_wrong_delimiter -> passed",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "duplicate order ids are rejected at row level",
+            "evidence": "test_duplicate_rows -> 400, row 7 reported",
+            "status": "verified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "C1: success shape matches the API conventions?",
+      "result": "pass",
+      "note": "reviewed against existing handlers"
+    },
+    {
+      "target": "b2-l1",
+      "question": "C2: a real file imports end to end?",
+      "result": "pass",
+      "note": "5k rows, count verified in DB"
+    },
+    {
+      "target": "b3-l1",
+      "question": "C3: malformed input rejected with a row number?",
+      "result": "pass",
+      "note": "two failing tests green"
+    },
+    {
+      "target": "b3",
+      "question": "C4: is the 1M-row / memory budget covered?",
+      "result": "gap",
+      "note": "no leaf measures large-file throughput; only a 5k-row fixture exists"
+    }
+  ],
+  "conclusion": ""
+}

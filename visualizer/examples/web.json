@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "domain": "web",
+  "title": "Checkout flow with saved cards",
+  "root": {
+    "id": "r",
+    "text": "a logged-in user can pay with a saved card and reach the confirmation",
+    "children": [
+      {
+        "id": "b1",
+        "text": "cart and pricing",
+        "children": [
+          {
+            "id": "b1-1",
+            "text": "line items persist across the flow",
+            "children": [
+              {
+                "id": "b1-1-1",
+                "text": "cart state survives refresh and the 3DS round trip",
+                "children": [
+                  {
+                    "id": "b1-1-1-l1",
+                    "text": "server-side cart keyed by session, not localStorage",
+                    "evidence": "GET /api/cart after refresh returns the same 3 items",
+                    "status": "verified"
+                  },
+                  {
+                    "id": "b1-1-1-l2",
+                    "text": "price is recomputed server-side before charge",
+                    "evidence": "curl with tampered client total -> server total used (order 8812)",
+                    "status": "verified"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "payment",
+        "children": [
+          {
+            "id": "b2-1",
+            "text": "3DS redirect return",
+            "children": [
+              {
+                "id": "b2-1-l1",
+                "text": "return URL restores the flow and does not resubmit",
+                "evidence": "manual walk: redirect back to /checkout/return, single charge (provider dashboard)",
+                "status": "verified"
+              },
+              {
+                "id": "b2-1-l2",
+                "text": "webhook is the source of truth for paid",
+                "evidence": "provider webhook replayed -> order marked paid once, idempotency key honored",
+                "status": "verified"
+              }
+            ]
+          },
+          {
+            "id": "b2-2",
+            "text": "saved cards",
+            "children": [
+              {
+                "id": "b2-2-l1",
+                "text": "another user's card id is rejected",
+                "evidence": "curl DELETE /api/cards/<other-id> -> 404, row unchanged",
+                "status": "verified"
+              },
+              {
+                "id": "b2-2-l2",
+                "text": "double submit never charges twice",
+                "evidence": "two rapid POSTs with the same idempotency key -> one charge, second 200 replay",
+                "status": "verified"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "mobile and states",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "375px layout keeps the pay button reachable",
+            "evidence": "manual render at 375px, screenshot",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "card list loading / error / empty states",
+            "evidence": "loading and empty observed; error state not yet forced",
+            "status": "unverified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-1-1-l2",
+      "question": "can the client influence the amount charged?",
+      "result": "pass",
+      "note": "tampered total ignored"
+    },
+    {
+      "target": "b2-2-l1",
+      "question": "is card authorization enforced server-side per resource?",
+      "result": "pass",
+      "note": "cross-user id returns 404"
+    },
+    {
+      "target": "b2-1-l2",
+      "question": "is confirmation derived from the webhook, not the redirect?",
+      "result": "pass",
+      "note": "replay marks paid exactly once"
+    },
+    {
+      "target": "b3-l2",
+      "question": "does every data surface handle loading, error and empty?",
+      "result": "gap",
+      "note": "error state on the card list was never forced"
+    }
+  ],
+  "conclusion": ""
+}

@@ -1,0 +1,4557 @@
+# reasoning-suite - every file, verbatim
+
+Generated from the files on disk (`reasoning-suite/`). Nothing is truncated.
+Fences use four backticks because the skill files contain triple-backtick blocks.
+
+## `tree.schema.json`
+
+````json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tree.schema.json",
+  "title": "tree-json - reasoning tree",
+  "description": "Contract between the reasoning skills (Part A) and the visualizer (Part B). Emitted once per non-trivial reasoning run inside a fenced block tagged tree-json.",
+  "type": "object",
+  "required": ["version", "domain", "title", "root", "reverse_check", "conclusion"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "domain": { "enum": ["general", "debug", "code", "web"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "root": { "$ref": "#/$defs/node" },
+    "reverse_check": {
+      "type": "array",
+      "description": "One entry per checked branch or leaf boundary, in bottom-up order.",
+      "items": {
+        "type": "object",
+        "required": ["target", "question", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "target": { "type": "string", "minLength": 1, "description": "id of the node the check is about" },
+          "question": { "type": "string", "minLength": 1 },
+          "result": { "enum": ["pass", "fail", "gap"] },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "conclusion": {
+      "type": "string",
+      "description": "Final answer. Must stay empty while any reverse_check entry is fail or gap."
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "description": "Required on leaves: log line, test result, file:line, measurement, or explicit ASSUMPTION."
+        },
+        "status": {
+          "enum": ["verified", "unverified", "failed"],
+          "description": "Required on leaves. Never stored on root or branches: computed by the renderer."
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "$ref": "#/$defs/node" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "not": { "required": ["children"] } },
+          "then": { "required": ["evidence", "status"] }
+        }
+      ]
+    }
+  }
+}
+````
+
+## `README.md`
+
+````markdown
+# reasoning-suite
+
+Four AI skills that teach a model HOW to reason, plus a standalone visualizer for the
+tree those skills produce.
+
+```
+reasoning-suite/
+├── 1-general/     universal framework + the tree-json contract
+├── 2-debug/       symptom -> hypotheses -> evidence -> fix
+├── 3-code/        requirement -> acceptance criteria -> runnable parts
+├── 4-web/         user goal -> checkable web parts -> flow walk
+├── tree.schema.json
+├── TEST-PLAN.md
+└── visualizer/    static site (HTML/CSS/JS, no build, no backend)
+```
+
+Every skill emits one fenced `tree-json` block after the prose answer; the visualizer
+parses, validates, renders, plays and edits that tree.
+
+## 1. Install the skills
+1. Copy the four folders into the skills directory of your agent:
+   - Claude Code / compatible: `~/.claude/skills/` (project-local: `.claude/skills/`)
+   - any other tool: the folder that holds `<name>/SKILL.md` skill packages
+2. Keep the folder names (`1-general`, `2-debug`, ...) and the `references/` subfolders;
+   the skills link to them by relative path.
+3. `tree.schema.json` lives at the suite root because `1-general/references/tree-format.md`
+   points at `../tree.schema.json`. If you install only one skill, copy that file next to
+   the skill so the relative link still resolves.
+4. Restart the agent so it re-reads the skill index. Verify: a prompt like
+   "should we shard the orders table?" must load `general-reasoning`, and
+   "fix this pytest flake" must load `debug-reasoning`.
+
+Installing all four is optional: `2-4` reference `1-general`, so install `1-general`
+whenever you install any other one. The three domain skills never repeat the base
+procedure.
+
+## 2. Run the visualizer locally
+No build step:
+- Option A: double-click `visualizer/index.html` (works offline; examples are embedded
+  in `examples/data.js` because browsers block `fetch()` on `file://`).
+- Option B (recommended for file upload tests): `cd visualizer && python -m http.server 8080`,
+  then open `http://localhost:8080`.
+
+Paste a `tree-json` block (or a whole markdown answer containing one) and press Render,
+or pick one of the four examples (all-green / failed leaf / reverse-check gap / deep tree).
+
+## 3. Deploy it free
+The site is fully static and needs no server:
+- GitHub Pages: push the repo, Settings -> Pages -> Deploy from branch -> `/` (root) or
+  `/reasoning-suite/visualizer` if you publish a subfolder.
+- Netlify: drag the `visualizer/` folder onto app.netlify.com/drop.
+- Vercel: `vercel deploy --prod` from inside `visualizer/` (framework preset: Other).
+- Cloudflare Pages: connect the repo, build command empty, output directory `visualizer`.
+
+Nothing calls the network at runtime, so the page also works from a USB stick or a
+local copy with the Wi-Fi off.
+
+## 4. Use the full loop
+1. Ask the agent a non-trivial question. It reasons root -> branches -> leaves, runs the
+   upward check, then emits the `tree-json` block.
+2. Copy that block into the visualizer (or save it and use Upload, or keep it as a
+   `examples/*.json`-style file).
+3. Read the top bar: READY only when every leaf is verified and no check is `fail`/`gap`.
+4. Click the blocking chips to jump to the offending node; use UP playback to watch the
+   reverse check land and the status propagate.
+5. Fix the failed/unverified nodes as new evidence arrives (double-click to edit), then
+   re-run the reasoning with the fixed tree - the model must not patch the conclusion.
+6. Export the final tree (JSON for records, PNG/SVG for a review or a ticket).
+
+## 5. Validate anything by hand
+`tree.schema.json` is standard JSON Schema 2020-12; `npx ajv-cli validate` or any online
+validator accepts it. The visualizer implements the same rules plus two extras that JSON
+Schema cannot express: unique node ids, and `reverse_check[].target` must exist.
+
+## 6. Test the suite
+`TEST-PLAN.md` holds the 12 skill prompts (easy / hard / non-trigger per skill) with
+pass checks and a defect-routing table, plus the visualizer manual checklist.
+````
+
+## `TEST-PLAN.md`
+
+````markdown
+# Test Plan - reasoning-suite
+
+Purpose: verify each skill activates at the right time, and that when it activates the
+reasoning shape (root -> branches -> leaves -> UP) actually appears in the output.
+
+## Harness rules
+1. One skill installed per session (`1-general` alone, then `2-debug` alone, ...).
+   A second skill installed changes the trigger decision.
+2. Fresh session per prompt, empty conversation, no repo contents pre-loaded.
+3. Run each prompt 3 times. Trigger must be 3/3 for trigger prompts (2/3 = DEFECT),
+   and 0/3 for non-trigger prompts (1/3 = DEFECT).
+4. Judge on observable artifacts, never on style: is there a root sentence with a named
+   output? are there 2-4 branches? is each leaf a fact with a source? does the UP check
+   appear (or its loop-back) before the answer?
+5. Never accept a correct final answer as proof the procedure ran: a lucky answer with
+   no leaves scores 0 on procedure.
+6. Ground truth for "verifiable leaf": a second person could re-run or re-read it and
+   get the same result, using only what the prompt and tools provide.
+
+## Scoring sheet (per run)
+| Dimension | 0 | 2 | 4 |
+|---|---|---|---|
+| Activation | wrong skill / none when required | activated but after a wrong start | activated first, correct |
+| Root | no root or output unnamed | root present, output vague | one sentence + named output (or split + ASSUMPTION) |
+| Branches | steps, or 5+ | 2-4 but overlapping or one part of root unclaimed | 2-4, independent, jointly sufficient |
+| Leaves | opinions ("likely", "should be fine") | mixed: some facts, some opinions | every leaf a fact with a named source, opinions labelled ASSUMPTION |
+| UP pass | absent; answer first | mentioned, not applied to leaves | applied per branch, audit line printed, loop-back used on a real gap |
+| Discipline | suppressed / unrequested work / patched conclusion | one slip | no suppression, nothing unrequested, fixes at the faulty branch |
+
+Pass bar per prompt: >= 20/24 and no 0 in Activation or Leaves.
+
+---
+
+# 1-general (`general-reasoning`)
+
+## E1 - easy: pick a retry library
+Install: `general-reasoning` only.
+Prompt (verbatim):
+```
+Repo: tools/notify-cli (Node 20, TypeScript, esbuild bundle, currently ZERO runtime deps).
+Team: 1 person. Budget: ~2 hours.
+Task: the CLI POSTs to /notify and we need retry on 5xx with exponential backoff.
+Constraint: no new transitive dependencies in the bundle - the CLI ships to customers
+as a single file and we audit everything in it.
+Question: use p-retry, use async-retry, or write ~30 lines ourselves?
+Give me the decision and the reasoning.
+```
+Traps:
+- The shallow answer is "both libraries work". Pass requires leaves that actually
+  distinguish the options (dependency tree, API fit) and naming the one check that would
+  flip the decision.
+- "No new transitive deps" is the constraint most likely to be dropped.
+Expected: activated 3/3; ROOT names output = decision + 3 reasons (+ the flip check);
+branches ~ dependents/dependency weight, API fit (test/teardown control), maintenance
+(commit activity, issue age); leaves cite package.json / lockfile contents / README
+lines, not impressions; UP line printed.
+Pass checks:
+- C1 Root sentence contains "decision" and the required 3 reasons.
+- C2 At least one leaf is a concrete dependency-tree or file-content observation.
+- C3 At least one leaf covers the zero-deps constraint from the prompt.
+- C4 Answer states the check that would flip the recommendation.
+Fail patterns: answer "they are all fine, pick p-retry" with no leaf; ignoring the
+bundle constraint; listing 5+ "branches" that are really implementation steps.
+Variants that MUST still trigger: "which of these three should we ship, and why";
+"we ship one file to customers, does either library break that".
+Variants that MUST NOT trigger: "rename retry() to withRetry()" (mechanical);
+"what is exponential backoff" (definition).
+
+## H1 - hard: two goals in one prompt
+Install: `general-reasoning` only.
+Prompt (verbatim):
+```
+Support tickets went from 40/day to 85/day starting Tuesday 2026-09-29.
+We deployed v2.31 that afternoon (login/session changes only). The support dashboard
+was NOT changed. Daily active users: 12.1k -> 12.0k over the same period.
+We are a 1-person on-call. No paging tooling today; if this is an incident I have to
+decide tonight whether to wake people up and roll back, or wait for morning.
+Tell me why this happened and what I should do tonight.
+```
+Traps:
+- Two goals in one prompt (explain + decide). Rule 1: one sentence per root, two goals
+  -> either split into two runs or one root with both parts in the named output.
+- The "first plausible branch" (v2.31) must not be accepted without an alternatives
+  branch; the deploy history must not be treated as proof.
+- The decision must stay conditional while any leaf is UNVERIFIED.
+Expected: activated 3/3; alternatives branch present; quantitative leaves (ticket tag
+counts, DAU numbers, deploy timestamp); confidence stated; the tonight-decision derived
+from leaves, not from vibe.
+Pass checks:
+- C1 Root handles the two goals explicitly (split or named two-part output).
+- C2 At least one branch is "is the increase real / measured differently".
+- C3 At least one branch kills an alternative cause.
+- C4 Decision is conditional on a named check if any leaf is unverified.
+- C5 UP audit line printed; any gap triggers a visible loop-back.
+Fail patterns: single-cause narrative starting and ending with v2.31; "page the team"
+with no leaf tie-in; 5+ branches; mixing explanation and decision into one answer
+sentence per paragraph.
+Variants that MUST still trigger: "was Tuesday's deploy the cause? and do we roll back";
+"explain the spike, then give me a go/no-go".
+Variants that MUST NOT trigger: "summarize this ticket export" (pure formatting);
+"what does v2.31 change" (lookup).
+
+## N1 - non-trigger: reformat JSON
+Install: `general-reasoning` only.
+Prompt (verbatim):
+```
+Reformat this JSON to 2-space indent and keep the key order:
+{"b":1,"a":[2,3],"c":{"d":true}}
+Output only the JSON, no commentary.
+```
+Expected: NOT activated. One mechanical transform, no constraints, no tradeoff.
+Pass checks: no tree, no branch list, no UP line, no "let me decompose"; output is the
+reformatted JSON only (key order preserved).
+Fail patterns to catch: any decomposition preamble; any question back to the user;
+reordering keys.
+Variants that MUST NOT trigger: "sort these 50 strings alphabetically";
+"convert this CSV to TSV".
+
+---
+
+# 2-debug (`debug-reasoning`)
+
+## E2 - easy: one exact traceback
+Install: `debug-reasoning` only.
+Prompt (verbatim):
+```
+Command: python -m app.worker --job sync
+Result: TypeError: cannot unpack non-sequence NoneType
+Traceback (most recent call last):
+  File "app/worker.py", line 88, in run_job
+    payload, meta = load_config(job.name)
+  File "app/config.py", line 31, in load_config
+    return CACHE[name]
+Versions: python 3.11.6, app 4.2.0. Same command worked yesterday.
+Expected: the job starts and syncs.
+app/config.py:
+  28 def load_config(name):
+  29     if name in CACHE and not _stale(name):
+  30         return CACHE[name]
+  31     return CACHE.get(name)          # line 31
+```
+Traps:
+- The traceback points at line 31 in the pasted source, but the message comes from
+  unpacking `None` at worker.py:88 - the model must not "fix" the quoted line blindly.
+- "worked yesterday" is a time-based detail that belongs in the root, not ignored.
+Expected: activated 3/3; ROOT copies the exact symptom + expected vs actual + "worked
+yesterday"; hypotheses from at least three classes; a repro command is required before
+any fix; the fix explains the None return path, not the unpacking site.
+Pass checks:
+- C1 Root quotes the error and states expected vs actual.
+- C2 Hypotheses include >= 2 classes (e.g. input data, logic, environment/config).
+- C3 Leaves are file:line citations or command outputs; no "probably".
+- C4 Fix targets the source of `None`; regression check named.
+- C5 UP answers "does this explain the 'worked yesterday' detail?".
+Fail patterns: rewriting `payload, meta = ...` to a defensive unpack (symptom patch);
+guessing "config cache expiry" with no leaf; editing before a repro; several changes at
+once.
+Variants that MUST still trigger: "this worked this morning, now it does not";
+"can you tell what is None here".
+Variants that MUST NOT trigger: "log the payload in worker.py:88" (known edit);
+"explain what unpacking does" (explanation).
+
+## H2 - hard: flaky, CI-only, order-dependent
+Install: `debug-reasoning` only.
+Prompt (verbatim):
+```
+test_orders.py::test_cancel passes alone on my machine, but fails in the full suite.
+CI: 2 failures in the last 10 runs (10-15%). Local single-file run: 10/10 pass.
+CI image: python:3.9, pytest 7.4, xdist -n 4. Local: python 3.12, pytest 8.1, no xdist.
+Failure: AssertionError: expected 1 order, got 2 (test_orders.py:44)
+conftest.py fixture:
+  @pytest.fixture(scope="session")
+  def db():
+      return create_engine(URL)
+The failing test creates an order in test_a.py earlier in the session, then test_cancel
+counts orders.
+We are supposed to ship tomorrow. Should I just add retries to CI?
+```
+Traps:
+- "Should I just add retries to CI?" is bait for symptom suppression.
+- Two plausible axes (test isolation vs parallelism/version). Both need leaves.
+- Unquantified claims are not allowed: the 2/10 must be turned into a reproducible leaf.
+Expected: activated 3/3; flake protocol (quantify, order vs random, seed/order capture);
+session-scoped fixture and xdist named as hypotheses; retries explicitly rejected unless
+a timing leaf proves them; fix = isolation/cleanup; regression = both orders in CI.
+Pass checks:
+- C1 Root quantifies the flake and names the repro command.
+- C2 Hypotheses cover both isolation/order and xdist/version.
+- C3 A leaf distinguishes them (e.g. `-p no:xdist`, reversed order).
+- C4 Answer rejects blind retries, or states the timing leaf that would justify them.
+- C5 Regression check added with the fix; UP covers "why not local".
+Fail patterns: "add retries/sleep" as the answer; only one hypothesis; fix at the
+assertion line (change expected 1 -> 2); no seed/order evidence.
+Variants that MUST still trigger: "passes locally, red on CI about 1 in 5";
+"test passes in isolation but not with the suite".
+Variants that MUST NOT trigger: "set pytest -n 0 in CI" (known config change);
+"what does xdist do".
+
+## N2 - non-trigger: known, mechanical edit
+Install: `debug-reasoning` only.
+Prompt (verbatim):
+```
+In settings.py change LOG_LEVEL from DEBUG to WARNING. It is on line 12.
+```
+Expected: NOT activated. Cause is not in question; nothing is broken.
+Pass checks: no hypotheses, no repro step, no regression-test demand; a single edit
+(or the exact diff) only.
+Fail patterns: asking for a stack trace; writing a hypothesis table; demanding a
+reproduction.
+Variants that MUST NOT trigger: "rename MAX_RETRY to MAX_RETRIES everywhere";
+"delete the unused import in line 3".
+
+---
+
+# 3-code (`code-reasoning`)
+
+## E3 - easy: small parser
+Install: `code-reasoning` only.
+Prompt (verbatim):
+```
+Write a Python 3.11 function `parse_pairs(text: str) -> dict[str, str]` for our config
+loader. Input lines look like `key=value`. It will read user-edited files, so it must
+not blow up on junk. No dependencies. There is a tests/ dir with pytest.
+```
+Traps:
+- Behaviour for malformed lines is unspecified. Pass requires either asking or an
+  explicit ASSUMPTION line; silent invention is a fail.
+- "must not blow up on junk" is not a criterion until it is turned into one.
+Expected: activated 3/3; criteria listed before code (comment lines, empty value,
+duplicate key, whitespace, no `=`, empty file); leaves = function + a run of those
+cases; verify command with real output.
+Pass checks:
+- C1 >= 4 acceptance criteria listed, including malformed input.
+- C2 Unspecified behaviour marked ASSUMPTION (or one bounded question).
+- C3 Test run shown, covering empty + malformed + duplicate.
+- C4 No extras: no plugins, no config object, no CLI.
+Fail patterns: 30-line function with no criteria; "raises ValueError on bad input"
+silently assumed; only the happy path tested; adding a `PairStrategy`.
+Variants that MUST still trigger: "parse these into a dict, source files are user-edited";
+"we need a robust parser for `k=v` files used by config".
+Variants that MUST NOT trigger: "fix the typo in parse_pairs docstring";
+"explain how dict comprehension works".
+
+## H3 - hard: public API rate limiting
+Install: `code-reasoning` only.
+Prompt (verbatim):
+```
+Add rate limiting to our public API. FastAPI app, deployed with 4 uvicorn workers,
+behind one nginx. Existing clients send no special headers and must keep working.
+Per API key: 600 requests / 10 minutes. Over limit: 429 with Retry-After (seconds).
+Redis is already in the stack for caching (redis-py client + REDIS_URL in prod).
+No new infrastructure. We need a counter we can alert on. Ship it.
+```
+Traps:
+- 4 workers rules out an in-process counter; that leaf must appear (otherwise the
+  delivered limit is per-worker = 4x).
+- "Existing clients keep working" + Retry-After must be criteria, not afterthoughts.
+- "we need a counter we can alert on" invites scope creep (dashboards, admin API).
+Expected: activated 3/3; criteria list incl. 429 shape, Retry-After, multi-worker
+correctness, existing-client compatibility; branches by risk (interface/headers, storage
+keying, core logic, errors/edges, tests); leaves runnable (tests, worker-count check,
+key format); YAGNI pass rejects the dashboard.
+Pass checks:
+- C1 Criteria include the 4-worker requirement as a checkable statement.
+- C2 A leaf cites the deployment/worker configuration as the reason for shared storage.
+- C3 Tests cover: under limit, at limit, over limit, missing key, Retry-After value.
+- C4 Report has criteria -> proof mapping and the exact verify command + output.
+- C5 Nothing beyond the ask (no admin UI, no per-route config, no metrics vendor).
+Fail patterns: in-memory dict limit shipped; 429 without Retry-After; only happy-path
+test; unrequested dashboard; "should work in prod" as verification.
+Variants that MUST still trigger: "we run 4 workers and need a shared limit";
+"our API needs 429 + Retry-After per key, no new infra".
+Variants that MUST NOT trigger: "document the existing rate limit in README";
+"where is REDIS_URL used".
+
+## N3 - non-trigger: explanation only
+Install: `code-reasoning` only.
+Prompt (verbatim):
+```
+Explain what this query does:
+SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.id HAVING COUNT(o.id) = 0;
+No code changes.
+```
+Expected: NOT activated. No implementation, no criteria, no artifacts.
+Pass checks: a plain explanation (users with no orders, LEFT JOIN + HAVING trick);
+no criteria list, no tree, no verify command.
+Fail patterns: proposing tests; proposing to refactor it; asking for acceptance
+criteria.
+Variants that MUST NOT trigger: "summarize this file"; "what does HAVING do".
+
+---
+
+# 4-web (`web-reasoning`)
+
+## E4 - easy: signup form
+Install: `web-reasoning` only.
+Prompt (verbatim):
+```
+Add a newsletter signup to the marketing landing page. Stack: Next.js app router,
+Tailwind, existing POST /api/contact route, Resend for email.
+Requirements: GDPR consent checkbox (unchecked by default, required), show success
+message, show an error if the address is bad or the provider fails, must not
+double-submit if the user clicks twice. Design mobile view first.
+```
+Traps:
+- "bad address" invites client-only validation; the server leaf is mandatory.
+- Double-submit is a state requirement (disabled + idempotent request), often skipped.
+- Consent must be stored/checked server-side, not just rendered.
+Expected: activated 3/3; root = "a visitor can subscribe" with the flows named; states
+pass (loading/error/success/empty-not-applicable); server validation leaf; consent leaf;
+375px leaf; disable-on-submit leaf.
+Pass checks:
+- C1 Root is user-goal phrased, not "add a component".
+- C2 A curl leaf bypasses the form and proves the server rejects bad/absent consent.
+- C3 Double-submit handled and stated (button state + server behaviour).
+- C4 States all observable; 375px render named.
+- C5 No secrets/keys referenced in client code.
+Fail patterns: only client-side regex; success message only; no consent check server
+side; sending the API key from the browser; no error state.
+Variants that MUST still trigger: "let visitors subscribe, we are in the EU";
+"simple email capture on the landing page, mobile first".
+Variants that MUST NOT trigger: "fix the footer typo"; "change the hero image alt text".
+
+## H4 - hard: checkout with saved cards
+Install: `web-reasoning` only.
+Prompt (verbatim):
+```
+Build the checkout flow: cart -> pay -> confirmation, with saved cards for logged-in
+users. Payments go through our existing billing/ integration (provider tokenizes cards;
+no PAN touches our servers). Session cookie auth exists. Save-card must be opt-in per
+payment and removable from /account/cards.
+Hard requirements: 3DS may redirect away and back - the flow must survive the return;
+a double click must never charge twice; the confirmation webhook is the source of truth
+for "paid"; mobile-first.
+We ship Friday.
+```
+Traps:
+- The 3DS return and the webhook-as-source-of-truth are flow requirements that unit
+  tests will not catch; the browser walk must include them.
+- Idempotency and double-charge are security/state leaves.
+- "saved cards" invites leaked-card-data mistakes: another user's card id, provider
+  secret in the client bundle, card metadata in the list response.
+Expected: activated 3/3; branches by risk incl. auth+security and states; flow walk
+covering redirect return, refresh, back, double submit; security leaves attempted and
+reported (other user's card id -> 404, no secrets in bundle, webhook signature verified);
+idempotency key leaf; no-PAN statement checked against the integration.
+Pass checks:
+- C1 Root names the flow and the done-definition (3 routes + webhook).
+- C2 At least 3 security leaves attempted, with the observed result each.
+- C3 Double-submit/idempotency covered by a concrete leaf (test or observed request).
+- C4 Flow walk covers: 3DS return, refresh mid-flow, back button, logged-out deep link.
+- C5 States matrix applied to the card list (loading/error/empty/success).
+- C6 Nothing unrequested (no admin refund UI, no card editing beyond add/remove).
+Fail patterns: unit tests as proof of the flow; confirmation derived from the client
+redirect instead of the webhook; saving cards by default; card list returning provider
+payloads verbatim; "mobile-first" forgotten; no idempotency leaf.
+Variants that MUST still trigger: "saved cards + 3DS, we ship in 3 days";
+"cart to confirmation, must never double-charge".
+Variants that MUST NOT trigger: "change the price colour on the cart page";
+"add a `<title>` to the confirmation page".
+
+## N4 - non-trigger: static copy
+Install: `web-reasoning` only.
+Prompt (verbatim):
+```
+The footer says "Copyrite 2026 Acme" - fix it to "Copyright 2026 Acme".
+```
+Expected: NOT activated. No logic, no data, no flow.
+Pass checks: the one-line edit only; no states matrix, no security leaves, no flow walk,
+no 375px requirement.
+Fail patterns: asking about loading/error states; listing branches; demanding a browser
+walk for a string edit.
+Variants that MUST NOT trigger: "make the footer text 14px instead of 16px";
+"add aria-label to the footer logo link" (small a11y edit with a known target).
+```
+Note on the last variant: it is a deliberate boundary probe - if `web-reasoning`
+activates only because "aria" appears, tighten the description wording, not the skill
+body.
+
+---
+
+# Defect routing (how to improve the suite from failures)
+| Observed defect | Edit this file |
+|---|---|
+| Fires on non-trigger prompts | the skill's `description` (add the "Do NOT use for ..." case) |
+| Misses a trigger prompt | the skill's `description` (add the concrete trigger phrasing) |
+| Activated but no root sentence / no named output | Procedure step 1 in `SKILL.md` |
+| Steps instead of independent branches | `references/tree-reasoning.md` (branch rules) or the domain `*-branches.md` |
+| Opinion leaves survive | `references/*examples*.md` (add the bad example) or the leaf table |
+| UP pass skipped or patched conclusion | `references/reverse-check.md` + rule 4/5 wording |
+| Domain step missing (e.g. states pass, flake protocol) | the domain SKILL.md procedure or its reference file |
+| Suppression (retry/try-except/skip test) accepted | the domain "Common mistakes" + rule wording |
+| Over-engineering accepted | the YAGNI/over-engineering pass wording |
+
+---
+
+# Part B: visualizer manual checklist
+
+Target: `visualizer/index.html` (double-click, or serve the folder). Start each run
+from a clean profile (or clear the session) because the last session is restored.
+Items marked **[auto]** below are already covered by the Chromium run recorded in the
+delivery notes; keep them in the manual pass as regression checks.
+
+1. **Load / default** [auto] - page opens with no console errors, the general example
+   renders (10 nodes, 9 edges), verdict READY, 6 verified leaves, 0 errors.
+2. **Invalid JSON** [auto] - paste `{"version":1,` -> one error
+   `$ - Invalid JSON: ... [json]`, tree area empties, verdict `-`, no crash.
+3. **Schema error with node path** [auto] - general example, delete a leaf `evidence`
+   -> `root.children[0].children[0] - leaf missing evidence ... [leafEvidence]`,
+   verdict NOT READY, blocking chip `tree invalid: 1 validation errors`.
+4. **Semantic warning** [auto] - debug example with a `conclusion` added while a check
+   is `fail`/`gap` -> amber warning row `[semantic]`, verdict NOT READY.
+5. **100-node tree** [auto] - render the generated 100-node tree: 100 nodes,
+   99 edges, 0 overlapping cards, < 300 ms render, verdict READY, pinch/zoom still
+   responsive.
+6. **Failed / gap examples** [auto] - debug: 3 verified / 1 unverified / 1 failed,
+   2 check issues, blocking `b3-l1`, `b3-l2`, `b3`. code: 4 verified, 1 gap, blocking
+   `b3`. web: 7 verified / 1 unverified, 1 gap, 16 nodes, depth 5.
+7. **Playback DOWN** [auto] - click DOWN then pause: 0 nodes visible at step 0,
+   root at step 1, one more node per step, revealed nodes neutral (`status-none`).
+8. **Playback UP** [auto] - click UP: all nodes visible, no status colours yet; each
+   step highlights one `reverse_check` target (`.node.highlight`) and the badge shows
+   `step N/M · <target> <RESULT>`; statuses appear deepest level first; Show all exits
+   playback with every status shown.
+9. **Step / speed / reduced motion** - Step - at index 0 does not go negative; the
+   speed slider changes the interval; with OS "reduce motion" enabled (or DevTools ->
+   Rendering -> prefers-reduced-motion: reduce) nothing animates and steps apply
+   instantly [auto for the CSS rule, manual for the OS toggle].
+10. **Zoom / pan / fit** [auto] - wheel zooms about the cursor, drag pans (a drag must
+    not select a node), pinch zooms on a touch device, Fit returns a sane scale and
+    the badge matches `state.zoom`.
+11. **Mobile view** - 375 x 812: panels stack, details become a bottom sheet, the tree
+    keeps ~62vh, the toolbar wraps without clipping, tree gestures do not scroll the
+    page (`touch-action: none`).
+12. **Dark mode** [auto] - toggle Light/Dark/Auto: body background changes with the
+    theme, cards stay readable, status colours keep their icons and stroke patterns.
+13. **XSS attempt in a node text** [auto] - `root.text = '<img src=x onerror=...>'`
+    and a nested `<svg onload=...>`: no script fires, no `img`/`svg` element enters
+    the tree SVG, the text renders literally (and wraps across lines).
+14. **Edit + validation loop** - double-click a node: change text/evidence/status ->
+    JSON in the textarea updates, health counts and verdict update. Clear `evidence`
+    -> error appears and verdict flips to NOT READY. Restore -> READY.
+15. **Add / delete / cap** - add a child (new leaf is `unverified` with a `TODO`
+    evidence, so it blocks READY), delete it, and confirm a 5th child is impossible
+    (`Add child` disables at 4).
+16. **Collapse** - collapse the root: only the root remains; expand: full tree back.
+    Collapsed state survives a reload (session restore).
+17. **Copy / download / export** - Copy JSON matches the textarea; Download JSON opens
+    a file that re-imports; Export SVG opens in a browser with colours intact (styles
+    are inlined); Export PNG writes a 2x image with a white background.
+18. **Upload** - upload `examples/*.json`: tree renders identically to the dropdown
+    version. Upload a `.md` file containing a ` ```tree-json ` block: the block is
+    extracted and rendered.
+19. **i18n** - switch to `vi`: all labels, verdict, blocking chips and error messages
+    change (`Hiển thị`, `SẴN SÀNG`, `CHƯA SẴN SÀNG`, `children tối đa 4: hãy tách
+    hoặc hợp nhánh.`); no `&#...;` entity leaks into rendered text.
+20. **Keyboard** [auto] - Tab to the tree, ArrowDown/Up move parent/child,
+    ArrowLeft/Right move siblings, Enter opens the details panel with focus inside,
+    Space collapses, `+`/`-` zoom, `0` fits.
+21. **Storage disabled** - with cookies/site data blocked (or in private mode),
+    the page still loads, renders, edits and exports; only session restore is lost.
+22. **Offline** - disable the network, reload: everything works (nothing is fetched
+    at runtime; examples come from `examples/data.js`).
+23. **Size budget** - `app.js` + `style.css` + `index.html` + `examples/` stay under
+    150 KB total.
+````
+
+## `1-general/SKILL.md`
+
+````markdown
+---
+name: general-reasoning
+description: Root-branch-leaf reasoning with a mandatory upward (reverse) verification pass and a tree-json output block, for complex multi-step problems: planning, analysis, comparison, decisions with tradeoffs, designs, estimates, investigations, or any task with 2+ constraints where being wrong is expensive. Trigger on prompts like "which should we choose", "plan X", "why did Y happen", "is this good enough", "compare A and B", "should we do X or wait", or any multi-part ask. Do NOT use for single-step lookups, factual recall, definitions, one-line or mechanical edits, or pure reformatting and summarizing.
+---
+
+# General Reasoning (root -> branch -> leaf)
+
+## Purpose
+Turn a hard problem into a small tree, prove the tree, then write the answer.
+DOWN = decompose, UP = verify. The answer is written only after UP passes.
+
+## When to use
+- 2+ constraints, 2+ steps, or a decision with tradeoffs.
+- Planning, analysis, comparison, design, investigation, estimate, explanation of a
+  surprising observation.
+- Skip and answer directly when one tool call or one known fact settles it.
+
+## Procedure
+1. ROOT: restate the problem in ONE sentence and name the exact output. Ambiguity ->
+   an explicit `ASSUMPTION:` line. Two different goals -> two runs.
+2. BRANCHES: 2-4 independent sub-problems that together answer the root.
+   Independence: can branch A be answered without branch B? Sufficiency: if every
+   branch is answered, is the root answered? Ordered steps are not branches.
+3. LEAVES: per branch, the smallest verifiable conclusion: command output, test
+   result, `file:line`, measurement, config/doc quote, or a labelled `ASSUMPTION`.
+   Opinions, branch restatements and unfalsifiable claims are not leaves.
+4. DOWN: first write what evidence WOULD settle each branch, then collect the real
+   evidence. No placeholder leaf may survive into the UP pass.
+5. UP (reverse check): per leaf - a fact with a named source? per branch - does it
+   answer a named part of the root? whole tree - anything missing, redundant or
+   contradicting? Contradictions are resolved at the weaker leaf, never averaged.
+6. LOOP: on failure, fix the FAULTY BRANCH (new evidence, leaf or branch), then re-run
+   UP from there. Never patch the conclusion, never reshape a leaf to keep a
+   preferred answer.
+7. WRITE: root answer, then 2-4 decisive leaves, then open assumptions/risks.
+8. EMIT: one `tree-json` block (see Output) after the prose answer.
+
+## Reverse check
+Order: leaf -> branch -> root -> conflict with your preferred answer. Checklist,
+loop-back procedure and stop conditions: `references/reverse-check.md`. Open it when UP
+finds any failure, or when the tree has 3+ branches.
+
+## Rules
+1. One root sentence with the required output named. [G1][X1]
+2. 2-4 independent, jointly sufficient branches. [G1][G2][X2]
+3. Every leaf verifiable with a named source; no opinion leaves. [G3][X3]
+4. No conclusion before UP passes; no patching the conclusion. [X2][X3]
+5. Fix at the faulty branch, then re-run UP from there. [G4][X3]
+6. Gaps are labelled `ASSUMPTION`, never silently filled. [G2][X3]
+7. Default 3 branches; 5+ means you listed steps, not sub-problems.
+8. Print the UP audit line so a skipped check is visible. [G2]
+
+## Common mistakes
+- Steps as branches ("read file", "edit file").
+- Opinion leaves ("performance is fine") instead of measurements.
+- Answer first, tree built afterwards to justify it.
+- UP pass that re-reads the conclusion instead of the leaves.
+- Stopping at the first plausible branch; ignoring a contradicting branch.
+- Two loop-backs with no change: restate the ROOT, do not loop forever.
+
+## Output (tree-json)
+After the prose answer, emit ONE fenced block tagged `tree-json`:
+`version`, `domain`, `title`, `root` (nodes: `id`, `text`; leaves also `evidence` +
+`status`), `reverse_check` (`target`, `question`, `result`, `note`), `conclusion`.
+Rules: every leaf carries `evidence` and `status`; max 4 children per node; root and
+branch status are computed by the renderer, never stored; `conclusion` stays empty
+while any check is `fail` or `gap`. Full rules and error table:
+`references/tree-format.md`; schema: `../tree.schema.json`.
+
+## Compact example (indented tree)
+Task: "Ship the CSV export behind a feature flag?"
+```
+ROOT: decide flag vs direct release for the CSV export -> output: decision + 3 reasons.
+├─ B1: blast radius if the export is wrong
+│  └─ L1: export reads only, never writes -> src/export.py:41 (read)
+└─ B2: cost of the flag
+   └─ L2: flag = 1 config row + 1 route guard -> 2 files, 6 lines
+UP: L1 supports B1, L2 supports B2, B1+B2 answer the root, no conflict -> write it.
+```
+Same tree as `tree-json`:
+```tree-json
+{"version":1,"domain":"general","title":"CSV export: flag or direct release",
+ "root":{"id":"r","text":"decide flag vs direct release for the CSV export","children":[
+  {"id":"b1","text":"blast radius if the export is wrong","children":[
+    {"id":"b1-l1","text":"export reads only, never writes","evidence":"src/export.py:41 (no INSERT/UPDATE)","status":"verified"}]},
+  {"id":"b2","text":"cost of the flag","children":[
+    {"id":"b2-l1","text":"flag costs 2 files, 6 lines","evidence":"config/features.yaml + route guard diff","status":"verified"}]}]},
+ "reverse_check":[
+  {"target":"b1","question":"does the leaf prove there are no writes?","result":"pass","note":"code read"},
+  {"target":"b2","question":"is the flag cost complete?","result":"pass","note":"diff measured"}],
+ "conclusion":"Ship behind the flag: reversible, 6 lines, no persistence risk."}
+```
+````
+
+## `1-general/references/tree-reasoning.md`
+
+````markdown
+# Root -> Branch -> Leaf
+
+Open this when you are unsure how to split a problem, or when a leaf feels vague.
+Readable independently of any other file.
+
+## The shape
+```
+ROOT      the problem restated in one sentence + the exact output needed.
+BRANCHES  2-4 independent sub-problems; together they answer the root.
+LEAVES    for each branch, the smallest verifiable conclusion.
+```
+Written form (indentation is the contract; print this before answering hard tasks):
+```
+ROOT: <one sentence> -> output: <format/file/decision>
+├─ B1: <sub-problem>
+│  ├─ L1: <evidence + source>
+│  └─ L2: <evidence + source>
+└─ B2: <sub-problem>
+   └─ L3: <evidence + source>
+```
+
+## Root rules
+- ONE sentence. Two different goals -> two runs.
+- Name the output: "a diff", "recommendation + 3 reasons", "pass/fail on 5 criteria".
+  Without a named output the UP pass has nothing to check.
+- Ambiguity is resolved by an explicit `ASSUMPTION:` line under the root, not by silence.
+
+## Branch rules
+- 2-4 branches. 1 = no decomposition needed. 5+ = you are listing steps: merge.
+- Independence: can you answer A without answering B? If not, merge them.
+- Sufficiency: if the user reads every branch answer, is the root fully answered?
+- Branches are not ordered steps. "1. read file 2. edit file" is a plan, not a tree.
+- Useful cuts: by constraint, by stakeholder, by risk, by mechanism (causes in
+  debug-reasoning), by layer (data/logic/UI in web-reasoning), by time (now/next).
+
+## Leaf rules
+A leaf is valid only if a second person could re-run or re-read it and get the same
+result.
+
+| Leaf type         | Example |
+|-------------------|---------|
+| command + output  | `pytest tests/export.py` -> 3 passed |
+| code location     | src/export.py:41 writes rows without LIMIT |
+| measurement       | p99 12ms over 1000 runs (bench.ipynb cell 4) |
+| doc/config quote  | config/features.yaml: `export_csv: false` |
+| test result       | test_ttl_eviction fails: expected eviction, got stale row |
+| named assumption  | ASSUMPTION: single-tenant; not verified, flagged |
+
+Never a leaf: an opinion ("Redis is faster"); the branch restated ("errors handled");
+an unfalsifiable claim ("should scale fine"); a plan for later ("we could test it").
+
+## Bad leaf -> good leaf
+- "Cache is fast enough" -> "bench.py: p99 1.8ms vs 40ms budget".
+- "The bug is in parsing" -> "traceback line 12 raises ValueError on input ''".
+- "Edge cases covered" -> "tests: empty, 1 row, 10k rows pass; duplicate key fails".
+- "A11y is ok" -> "manual: Tab reaches submit in 4 presses; labels present".
+
+## Downward procedure
+1. Write ROOT (sentence + output).
+2. Write branches; run the independence and sufficiency tests.
+3. Write leaf placeholders: what evidence WOULD settle this branch?
+4. Collect evidence until every placeholder holds real content.
+5. Only now start the UP pass: `reverse-check.md`.
+
+## Scale guide
+- Simple question: skip the tree, answer.
+- Medium task: tree in the working notes, answer in prose.
+- Hard task or high cost of being wrong: print the tree, print the UP line, then answer.
+````
+
+## `1-general/references/reverse-check.md`
+
+````markdown
+# Upward Verification (reverse check)
+
+Run before writing any final answer. Open this whenever UP finds a failure, the tree
+has 3+ branches, or the first answer feels convenient.
+
+## Level 1: leaf -> branch (per leaf)
+- Is it a fact or a result, not an opinion? If not, replace it.
+- Has it a nameable source (file, command, URL, run id)? If not, it is an
+  `ASSUMPTION`; label it, and add a branch "validate assumption" if it is decisive.
+- Does it bear on THIS branch? Off-branch evidence: delete or move under its branch.
+- Is it stale after later edits? Re-run and re-read after every change.
+
+## Level 2: branch -> root
+- Restate the branch as "this branch answers: <part of root>". Cannot -> delete it.
+- Any part of the root unclaimed by all branches? A branch is missing: add it (max 4)
+  and fill real leaves.
+- Two branches yield the same leaf? Merge; redundancy hides contradictions.
+- Two branches contradict? Do not average. Find the weaker evidence, re-verify it,
+  then compare.
+
+## Level 3: conflicts with the preferred answer
+- If strong evidence points against your first intuition, follow the evidence.
+  Rewriting a leaf so the conclusion survives is forbidden.
+- A fix is valid only if the repaired tree still answers the ORIGINAL root question.
+  Patching the conclusion in place is forbidden.
+
+## Loop-back procedure
+1. Name the faulty branch (e.g. "B3: correctness evidence").
+2. Say what is wrong: missing leaf, weak leaf, or contradicting leaf.
+3. Replace the leaf or add evidence.
+4. Re-run level 1 and level 2 for that branch and for any branch sharing its evidence.
+5. Write the conclusion only after a clean pass.
+
+## Stop conditions
+- Two loop-backs change nothing -> the ROOT is mistated; restate it and rebuild.
+- A leaf is unobtainable with available tools -> mark it `UNVERIFIED`, make the answer
+  conditional ("decision if X holds"), and name the missing check.
+- Cap: 3 shape changes (branch added/dropped) per run. Past that, report the tree and
+  the blocker instead of guessing.
+
+## Audit line
+Append under every non-trivial answer:
+```
+UP: L1<->B1 ok | L2<->B1 ok | B1-B3 cover root | conflict: none | assumptions: 1
+```
+A missing line means the UP pass was skipped.
+````
+
+## `1-general/references/tree-format.md`
+
+````markdown
+# tree-json Format
+
+The contract between the reasoning skills and the visualizer. Read this before emitting
+a `tree-json` block. Machine version: `../../tree.schema.json`.
+
+## Where it goes
+At the end of a non-trivial reasoning run, after the prose answer, emit exactly ONE
+fenced block whose info string is `tree-json` and whose body is the JSON object
+described in "Shape" below. Every `tree-json` fence in this suite contains valid,
+parseable content - there are no skeleton blocks: each of the four `SKILL.md` files
+carries a complete example.
+
+The renderer also accepts a whole markdown message: it extracts the first `tree-json`
+block, or parses the raw text as JSON if no block is found.
+
+## Shape
+```json
+{
+  "version": 1,
+  "domain": "general | debug | code | web",
+  "title": "short title of the problem",
+  "root": { "id": "r", "text": "...", "children": [ /* 1-4 nodes */ ] },
+  "reverse_check": [
+    { "target": "b1", "question": "...", "result": "pass | fail | gap", "note": "..." }
+  ],
+  "conclusion": "written only when no reverse_check entry is fail or gap"
+}
+```
+
+## Validation rules (enforced by the schema and by the website)
+1. `version` = 1; `domain` one of the four values; `title` non-empty.
+2. Every node: `id` non-empty, unique across the tree; `text` non-empty.
+3. A node is a LEAF when it has no `children` key. Leaves MUST have `evidence`
+   (non-empty) and `status` in `verified | unverified | failed`.
+4. A node with `children` is a BRANCH (or the root). `children` must hold 1-4 nodes.
+   An empty `children` array is invalid: remove the key or add a child.
+5. `evidence` must be concrete: command output, test result, `file:line`, measurement,
+   config/doc quote, or a text starting with `ASSUMPTION`. Opinions are invalid leaves.
+6. `status` is stored on LEAVES ONLY. Root/branch status is always computed by the
+   website, never written by the model.
+7. `reverse_check[].target` must be an existing node `id`. `question` non-empty,
+   `result` in `pass | fail | gap`, `note` short.
+8. `conclusion` is a string. It must be empty while any `reverse_check` result is
+   `fail` or `gap`; the website flags the violation as "NOT READY".
+9. Depth is flexible; width is not: at most 4 children per node.
+
+## Computed status (website, not stored)
+- Leaf: `verified` -> green, `unverified` -> amber, `failed` -> red.
+  `failed` = the leaf's claim was checked and did NOT hold (for example: the fix did
+  not clear the repro, the test is red), so it blocks the READY verdict. A hypothesis
+  that was killed is not a failure: write it as a verified finding ("B2 is dead: log
+  line 118 shows the field").
+- Branch/root: red if ANY child is red; green only if ALL children are green;
+  otherwise amber.
+- READY verdict: every leaf green AND no `reverse_check` entry with `fail`/`gap`.
+  Otherwise NOT READY, and the blocking nodes are listed: non-verified leaves plus the
+  targets of `fail`/`gap` checks.
+
+## Minimal valid example
+```json
+{
+  "version": 1,
+  "domain": "general",
+  "title": "flag or direct release",
+  "root": {
+    "id": "r",
+    "text": "decide flag vs direct release for the CSV export",
+    "children": [
+      {
+        "id": "b1",
+        "text": "blast radius if the export is wrong",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "export reads only, never writes",
+            "evidence": "src/export.py:41 - no INSERT/UPDATE",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "cost of the flag",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "flag costs 2 files, 6 lines",
+            "evidence": "config/features.yaml + route guard diff",
+            "status": "verified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    { "target": "b1", "question": "does the leaf prove there are no writes?", "result": "pass", "note": "code read" },
+    { "target": "b2", "question": "is the flag cost complete?", "result": "pass", "note": "diff measured" }
+  ],
+  "conclusion": "Ship behind the flag: reversible, 6 lines, no persistence risk."
+}
+```
+
+## Common validation errors and fixes
+| Message | Cause | Fix |
+|---|---|---|
+| `leaf missing evidence` | leaf with no `evidence` | add the concrete observation or mark `ASSUMPTION ...` |
+| `leaf missing status` | leaf with no `status` | one of verified/unverified/failed |
+| `children must have 1-4 items` | empty array, or 5+ children | remove the key, or merge/split branches |
+| `duplicate id` | two nodes share an id | make ids unique (`b1-l1`, `b2-l2`, ...) |
+| `unknown target` | `reverse_check.target` not a node id | use an existing id |
+| `conclusion while check failed` | conclusion written with a fail/gap | clear it, fix the branch, re-run UP |
+
+## Writing order (skill side)
+1. Build the tree in the working notes (indented text).
+2. Run the UP pass; fix the faulty branch.
+3. Write the prose answer.
+4. Emit the `tree-json` block with the final leaf statuses and the `reverse_check`
+   results you actually obtained.
+````
+
+## `1-general/references/examples-good.md`
+
+````markdown
+# Good examples (general reasoning)
+
+Each example: task -> tree -> UP result -> answer. The "supports" line ties it to the
+rules in `SKILL.md` (reverse analysis: rule <- observed step).
+
+## G1 - Decision under a latency budget
+Task: "Pick Redis or an in-process dict for our rate limiter. p99 budget 40ms."
+```
+ROOT: choose the rate-limit store -> output: choice + 3 reasons.
+├─ B1: latency of each option
+│  ├─ L1: bench.py dict -> p99 0.3ms
+│  └─ L2: bench.py redis(local) -> p99 1.8ms
+├─ B2: operational cost for a 1-person team
+│  ├─ L3: k8s/redis.yaml does not exist -> +1 deploy unit, failover config
+│  └─ L4: config/features.yaml already carries 1 flag pattern (2 files, 6 lines)
+└─ B3: correctness under rollout
+   ├─ L5: test_ratelimit.py -> 8 passed against dict
+   └─ L6: redis path skips TTL test -> gap found in UP
+```
+UP: L6 leaves B3 incomplete -> fix B3 (add TTL test for redis), re-run, re-check.
+Answer: dict. Reasons: B1 both pass the budget; B2 far cheaper; B3 verified by 9 tests.
+Supports: rule 1 (named output), rule 2, rule 4 (UP before answer), leaf types
+(command+output, measurement, missing-file check).
+
+## G2 - Plan with rollback
+Task: "Plan the Postgres 13 -> 16 upgrade for a 3-day window."
+```
+ROOT: give an upgrade plan with rollback -> output: ordered steps + rollback point.
+├─ B1: incompatibilities that force work before the window
+│  ├─ L1: pg_upgrade --check on copy -> 2 issues (cite output)
+│  └─ L2: app SQL: 1 use of removed syntax -> src/db/queries.py:88
+├─ B2: rollback feasibility
+│  ├─ L3: ASSUMPTION: no upgrade-after data written during window (unverified)
+│  └─ L4: 200GB dump time measured -> 41min restore (log)
+└─ B3: verification after cutover
+   ├─ L5: row counts per top-5 table captured pre/post (script output)
+   └─ L6: app smoke suite -> 12 passed
+```
+UP: L3 is decisive for B2 and unverified -> add branch B4 "validate assumption: writes
+blocked?" (bounded, cheap) instead of guessing. After that, branches cover the root.
+Answer: plan with a named rollback point, the 2 pre-window fixes, and the note "rollback
+is safe ONLY if writes are blocked; verify before cutover".
+Supports: rule 6 (assumption labelled), rule 8 (UP audit line printed), rule 5.
+
+## G3 - Is this page fast enough?
+Task: "Does the product page meet a 2.5s LCP budget on a mid-range phone?"
+```
+ROOT: pass/fail against 2.5s LCP -> output: verdict + the measuring leaf.
+├─ B1: what the measured LCP is now
+│  ├─ L1: Lighthouse mobile run -> LCP 3.9s (report path)
+│  └─ L2: 689KB JS in the critical path (coverage report)
+├─ B2: which part dominates
+│  ├─ L3: hero image 1.4MB, no width/height (index.html:31)
+│  └─ L4: 3 blocking scripts in <head> (index.html:8-10)
+└─ B3: what a cheap fix buys
+   └─ L5: after deferring scripts + sizing hero on a branch -> 2.1s (re-run)
+```
+UP: B1/B2/B3 answer the root; L5 is post-change evidence -> verdict is conditional on
+the change being applied, state it that way.
+Answer: FAIL now (3.9s, L1); two dominant leaves (L3, L4); a tested fix reaches 2.1s
+(L5), still needs a re-run on the real deploy target.
+Supports: rule 3 (every leaf measurable), rule 5 (fix verified in its own branch).
+
+## G4 - Why did support tickets double?
+Task: "Tickets went from 40/day to 85/day after Tuesday. Explain."
+```
+ROOT: explain the ticket increase -> output: cause + evidence + confidence.
+├─ B1: is the increase real or measured differently?
+│  ├─ L1: raw ticket export, same query -> 41 -> 84/day (artifact)
+│  └─ L2: no schema/dashboard change (form diff empty)
+├─ B2: what changed on Tuesday
+│  ├─ L3: deploy 2026-09-29 shipped v2.31 -> status page + 42 tickets mention login
+│  └─ L4: 61/84 tickets contain "login" -> tag counts (script output)
+└─ B3: alternative causes
+   ├─ L5: signup spike? daily active users flat -> analytics export 12.1k -> 12.0k
+   └─ L6: new mobile OS release that day? release calendar -> none
+```
+UP: B3 kills the alternatives, so B2 is not just the first plausible branch; B1 rules
+out measurement drift; the remaining leaf set supports the root without contradiction.
+Answer: cause = v2.31 login regression (61/84 tickets, L4); alternatives excluded
+(L5, L6); confidence high; next check = canary log for login errors.
+Supports: rule 2 (independent branches, alternatives branch), common-mistake
+"stopping at the first plausible branch".
+````
+
+## `1-general/references/examples-bad.md`
+
+````markdown
+# Bad examples (general reasoning)
+
+Each shows the exact skipped step and the failure pattern it feeds into "Common
+mistakes" in `SKILL.md`. Reverse analysis: mistake <- observed failure.
+
+## X1 - No root, no named output (scope drift)
+Task: "We might move off the old CMS. Thoughts?"
+Bad output: 900 words on CMS history, vendors, "it depends", ending with "keeping it
+may be fine, but migrating has advantages".
+Failure: no root sentence, no output named -> no branch can be judged sufficient, and
+the text drifts to whatever is easy.
+Fix: `ROOT: decide in/out for the CMS -> output: recommendation + 3 reasons + the one
+check that would flip it.` Then 2-4 branches (content volume, migration cost, SEO/URL
+risk), each with real leaves.
+Feeds mistake/rule: rule 1, "answer written first".
+
+## X2 - Branches as steps, no UP pass
+Task: "Add SSO to our internal tool." (analysis requested, not coding)
+Bad output:
+```
+1. read the auth code
+2. add oauth lib
+3. wire the login button
+4. done
+```
+Failure: these are ordered steps, not independent sub-problems; no branch covers
+"who can log in afterwards" or "what happens to existing sessions". Nothing was
+verified, and the root (should we, and how) is unanswered.
+Fix: branches = identity provider fit, session/existing-user impact, security
+(domain restriction, token storage), rollout/rollback. Leaves = config quote, test
+result, curl result.
+Feeds mistake/rule: rule 2, "branches that are steps".
+
+## X3 - Opinion leaves, then patching the conclusion
+Task: "Should we shard the orders table?"
+Bad output: conclusion "yes, shard now (perf)" with leaves
+`L1: sharding is faster`, `L2: the table is probably big`, `L3: ops can handle it`.
+UP "passes" because the conclusion is re-read, not the leaves.
+Failure: three opinion leaves; no measurement, no row count, no query plan; when
+someone notes the table is 4GB and p99 is 30ms, the model edits L2 to "4GB is large
+enough" to keep the answer.
+Fix: L1 -> `EXPLAIN ANALYZE top query -> 30ms, seq scan 4GB (output)`; L2 -> row count
++ growth/quarter (query); L3 -> ops leaf: existing partition maintenance in
+k8s/cron/ (file quote). Likely outcome: do NOT shard yet.
+Feeds mistake/rule: rule 3, rule 4, rule 6.
+````
+
+## `2-debug/SKILL.md`
+
+````markdown
+---
+name: debug-reasoning
+description: Root-branch-leaf debugging for errors, failures and wrong behavior in code, tests, builds or services: reproduce the exact symptom, form falsifiable cause hypotheses (environment/config, input data, logic, dependencies/versions, concurrency/timing), verify each with real evidence, fix the cause, confirm by re-run, then emit a tree-json block. Trigger on a stack trace, error text, failing test, crash, hang, wrong output, flake, "passes alone but fails in the suite", "works locally, fails on CI", "worked yesterday, not today", or a regression with an unknown cause. Do NOT use when the cause is already proven and only the known fix must be applied, for code explanation, or for behavior-preserving refactors.
+---
+
+# Debug Reasoning (symptom -> hypotheses -> evidence -> fix)
+
+Base shape, leaf rules, UP pass and `tree-json` output: `general-reasoning`
+(`1-general/SKILL.md`); this skill adds the debug root and hypothesis branches.
+
+## Purpose
+Find the cause of a failure with evidence, fix the cause, prove the fix.
+
+## When to use
+- An error, failing test, wrong output, crash, hang, flake or regression whose cause is
+  unknown.
+- NOT for: applying a known fix, explaining code, refactors.
+
+## Procedure
+1. ROOT: the symptom exactly - error text, command, expected vs actual, when it
+   started, reproducibility (always / N of M). Output = cause + fix + verify command.
+2. REPRODUCE: smallest command + full output. No fix attempts before a repro exists.
+   No repro yet -> branch B1 = "find a repro" (flake protocol in the reference).
+3. BRANCHES: 2-4 cause hypotheses from environment/config, input data, logic,
+   dependencies/versions, concurrency/timing. Name the killing evidence in advance.
+4. LEAVES: one evidence item per hypothesis: exact log line, minimal repro, test
+   result, diff, version string. Assumption-only leaves are labelled `ASSUMPTION`.
+5. KILL/SURVIVE: kill hypotheses with evidence. All dead -> add a hypothesis branch.
+   Survivor that does not explain the WHOLE symptom -> back to step 3, do not fix.
+6. FIX the cause: one change at a time, smallest diff. Re-run the repro -> must pass.
+7. REGRESSION: keep the smallest check that failed before and passes after; re-run the
+   previous behavior path for side effects.
+8. EMIT the `tree-json` block with `domain: "debug"`. A killed hypothesis is written
+   as a `verified` finding ("B2 is dead: log 118 shows the field"), never as a failed
+   leaf - `failed` means a check that failed (e.g. the fix did not clear the repro) and
+   it blocks the READY verdict.
+
+## Reverse check (debug additions)
+- Does the fix explain the ORIGINAL symptom completely - every observed detail, not
+  just the repro? Partial explanation -> wrong or incomplete cause.
+- Could it create a new bug? Check other callers/inputs of the changed code.
+- Confirmed by a re-run of the repro and covered by a regression check?
+- Was the symptom suppressed instead of fixed (broad `except`, retries, `|| true`,
+  skipped test, longer timeout)? That is a fail.
+
+## Rules
+1. Reproduce before diagnosing; the repro command goes in the answer. [G1][X3]
+2. Each hypothesis is falsifiable and gets its own evidence leaf. [G2][X1]
+3. One change at a time; after each change re-run the repro. [G2][X2]
+4. No fix without evidence; "likely" is not evidence. [X1][X3]
+5. Fix the cause, not the symptom; never suppress to go green. [X2]
+6. The fix must explain every detail of the original symptom. [G3][X3]
+7. Add the regression check in the same change as the fix.
+8. All hypotheses dead -> add a hypothesis; do not widen the fix.
+
+## Common mistakes
+- Editing code before having a repro (X3).
+- Guessing a cause from the error text; the first plausible hypothesis wins (X1).
+- `try/except` or retries around the failing line: symptom hidden, cause alive (X2).
+- Fixing a different error found on the way and declaring the original fixed (X3).
+- Changing several things at once, so the result proves nothing (X2).
+
+## Output (tree-json)
+`domain: "debug"`. Root = the symptom; branches = hypotheses; leaves = evidence with
+`status`: `verified` = the statement is established (a killed hypothesis is written as a
+verified finding), `unverified` = still open, `failed` = a check failed. `reverse_check`
+entries answer the four checks above, typically `target` = the surviving hypothesis and
+its fix leaf. Schema and rules: `../tree.schema.json`,
+`../1-general/references/tree-format.md`.
+
+## Compact example (indented tree) + tree-json
+Task: prod-only `KeyError: 'currency'` at checkout.
+```
+ROOT: cause + fix for KeyError 'currency' (prod checkout) -> cause + diff + verify cmd.
+├─ B1: environment/config
+│  ├─ L1: prod env dump lacks CURRENCY; .env.example:7 defines it
+│  └─ L2: docker-compose.yml:22 env_file: .env.prod
+├─ B2: input data
+│  └─ L3: B2 is dead - cart log line 118 carries "currency":"EUR"
+└─ B3: logic
+   └─ L4: settings.py:14 os.environ["CURRENCY"], no default
+UP: L1+L4 explain prod-only failure and the exact key; fix = default + explicit env
+value; verify = repro with empty CURRENCY, then checkout; regression = test_settings.
+```
+```tree-json
+{"version":1,"domain":"debug","title":"Prod-only KeyError 'currency' in checkout",
+ "root":{"id":"r","text":"find the cause of KeyError 'currency' at prod checkout and fix it","children":[
+  {"id":"b1","text":"environment/config missing the value","children":[
+    {"id":"b1-l1","text":"prod env lacks CURRENCY; .env.example:7 has it","evidence":"prod env dump diff","status":"verified"}]},
+  {"id":"b2","text":"input data missing the field","children":[
+    {"id":"b2-l1","text":"B2 is dead: cart payload carries currency=EUR","evidence":"log line 118","status":"verified"}]},
+  {"id":"b3","text":"code path has no default","children":[
+    {"id":"b3-l1","text":"settings.py:14 hard-indexes the env var","evidence":"settings.py:14 (read)","status":"verified"},
+    {"id":"b3-l2","text":"fix verified by repro + regression test","evidence":"repro with empty CURRENCY fails before, passes after; test_settings passes","status":"verified"}]}]},
+ "reverse_check":[
+  {"target":"b1","question":"does the config difference explain prod-only failure?","result":"pass","note":"only prod lacks the key"},
+  {"target":"b2","question":"does the input hypothesis survive?","result":"pass","note":"killed by log line 118; leaf records the verified finding"},
+  {"target":"b3","question":"does the fix explain the whole symptom and risk nothing new?","result":"pass","note":"default + explicit env value, re-run green"}],
+ "conclusion":"Missing prod env var read through a hard index; add default and set CURRENCY, regression test added."}
+```
+````
+
+## `2-debug/references/hypothesis-patterns.md`
+
+````markdown
+# Hypothesis Patterns (debug)
+
+Open this at step 3 of `SKILL.md` to pick branches, and at step 5 when a hypothesis
+survives but the symptom is not fully explained. Readable independently.
+
+## The five hypothesis classes
+
+| Class | Typical probes | Evidence leaf shape | Fast falsifier |
+|-------|----------------|---------------------|----------------|
+| Environment/config | diff dev vs prod env, flags, secrets, paths, cwd, locale, clock | `env` dump line, config quote, `print` of resolved value | run the repro with the other env |
+| Input data | dump the real payload/row/file that triggers it | log line, fixture file, failing row id | feed a known-good input |
+| Logic | read the exact branch; trace values | `file:line` + actual value at that point | unit test the function directly |
+| Dependencies/versions | lockfiles, runtime versions, CI image | version strings from both environments | pin to the other version, re-run |
+| Concurrency/timing | ordering, shared state, sleeps, parallel tests | run N times: N-1 pass, 1 fail (+ seed/order) | force serial order, fixed seed |
+
+Rule: each hypothesis must name, in advance, the evidence that would kill it. A
+hypothesis with no falsifier is an opinion and must be rejected.
+
+## Protocol: works locally, fails in CI/prod
+1. List differences: OS image, versions, env vars, cwd, time, network, data.
+2. Assign each difference to a class above; keep the 2-4 with a plausible mechanism.
+3. Kill cheaply first: version strings, env dump, data sample. Cheapest leaf wins.
+
+## Protocol: flaky / intermittent
+1. Quantify: "fails 3 of 10 runs", with the command. Unquantified flakes are untestable.
+2. Same-order vs random-order run. Ordering fails -> shared-state hypothesis
+   (concurrency/timing or test isolation).
+3. Log the seed / captured order for every failing run; a leaf must reproduce the failure.
+4. Fixes that only reduce frequency (sleeps, retries, more timeout) are symptom
+   suppression: FAIL unless the timing hypothesis itself is proven and the sleep is the
+   documented contract.
+
+## Protocol: bisect
+- Repo regression: `git bisect` with the repro command; leaf = the first bad commit
+  hash plus the diff hunk that causes it.
+- Dependency regression: downgrade one package at a time; leaf = version pair
+  (before/after) with repro output for each.
+
+## Test: does the fix explain the WHOLE symptom?
+Ask for every detail in the ROOT line (error text, expected vs actual, when it started,
+reproducibility rate, which environments fail):
+- Which leaf of the surviving hypothesis explains this detail?
+- A detail with no explaining leaf -> the cause is incomplete: keep hunting. Do not fix.
+This test is what separates a real cause from "the error no longer appears".
+
+## Test: could the fix create a new bug?
+- List every caller / input of the changed code (search the symbol).
+- Re-run the previous behavior path and any test touching that code.
+- Prefer the smallest change: a default value or a guard, not a rewrite.
+
+## One-change log (keep in the working notes)
+```
+change 1: <diff/commit> -> repro: still fails (same error)
+change 2: <diff/commit> -> repro: passes -> regression test added: <name>
+```
+No log -> steps were skipped or batched, and the result proves nothing.
+````
+
+## `2-debug/references/examples.md`
+
+````markdown
+# Examples (debug reasoning)
+
+Good: G1-G3. Bad: X1-X3. Each "supports" line ties the example to the rules in
+`SKILL.md`.
+
+## G1 - Prod-only KeyError
+Task: "`KeyError: 'currency'` at checkout in prod; fine locally."
+```
+ROOT: cause + fix for KeyError 'currency' (prod checkout) -> cause + diff + verify cmd.
+├─ B1: environment/config
+│  ├─ L1: prod env dump lacks CURRENCY; .env.example line 7 defines it
+│  └─ L2: docker-compose.yml:22 env_file: .env.prod (read)
+├─ B2: input data
+│  └─ L3: cart log line 118 -> payload contains "currency":"EUR" (not the input)
+└─ B3: logic
+   └─ L4: settings.py:14 uses os.environ["CURRENCY"] with no default
+```
+UP: L3 kills B2; L1+L4 explain prod-only failure and the exact key; fix = default +
+explicit env value; verify = repro with empty CURRENCY, then checkout; regression =
+test_settings_defaults (fails before, passes after).
+Supports: rule 1 (produce repro), rule 2, rule 3, rule 5, rule 7.
+Note: the model did NOT add `try/except` around settings (see X2).
+
+## G2 - Test order dependency
+Task: "`test_orders` passes alone, fails in the full suite."
+```
+ROOT: cause of order-dependent failure -> cause + diff + verify cmd.
+├─ B1: shared mutable state
+│  ├─ L1: run alone -> 1 passed; full suite -> fails at assertion line 44
+│  └─ L2: conftest.py fixture `db` is session-scoped, not reset (read)
+├─ B2: time/randomness
+│  └─ L3: seed 0 and 42 -> both fail in suite, pass alone -> time/random not the axis
+└─ B3: leaked row from an earlier test
+   ├─ L4: `pytest test_a test_orders` -> fails; `pytest test_orders test_a` -> passes
+   └─ L5: after test_a, orders has 1 extra row (query output)
+```
+UP: B3 leaf L4 pinpoints test_a; L2 explains the mechanism (no reset between tests);
+B2 excluded. Fix = function-scoped fixture or explicit cleanup in test_a. Verify:
+full suite green; single test still green. Regression = run both orders in CI.
+Supports: rule 2 (falsifiable hypotheses), rule 3, rule 6, flaky protocol.
+
+## G3 - Works locally, fails in CI
+Task: "CI fails on `SyntaxError` in a file that runs locally."
+```
+ROOT: cause of CI-only SyntaxError -> cause + fix + CI verify.
+├─ B1: versions/runtime
+│  ├─ L1: local python 3.12.2; CI image python:3.9 (ci.yml:14) (read)
+│  └─ L2: failing line uses `X | None` (PEP 604) -> 3.10+ only (file:line)
+├─ B2: environment/config
+│  └─ L3: CI env dump: same paths, no locale issue (log)
+└─ B3: partial checkout/stale cache
+   └─ L4: CI log shows fresh checkout of commit hash (matches local)
+```
+UP: L1+L2 explain the whole symptom (local ok, CI fails, exact error). B2/B3 dead.
+Fix = require-python >=3.10 in pyproject + CI image 3.12, or rewrite the annotation.
+Verify = re-run CI job; regression = keep the 3.12 job that would have caught it.
+Supports: rule 2 (dependency branch), rule 6 (whole-symptom test).
+
+## X1 - Guessed cause, no evidence
+Task: "API returns 500 sometimes."
+Bad: "Probably a race condition. Add a lock around the handler." No repro command, no
+log, no hypothesis killed, no leaf. The first plausible branch won.
+Failure: rule 2, rule 4. Fix: quantify the flake, then branches (DB timeout, lock
+contention, deploy overlap) with a leaf each.
+
+## X2 - Suppressed the symptom
+Task: "`KeyError: 'currency'` in prod."
+Bad: wrap the read in `try/except KeyError: currency = "USD"`. Checkout goes green; the
+missing prod configuration is still missing, and all USD/EUR carts are now mispriced.
+Failure: rule 5, rule 6. Fix: prove the config hypothesis (G1), fix the value, keep the
+default only as a documented fallback with a warning log.
+
+## X3 - Fixed a different error than the symptom
+Task: "Feature X fails for user A."
+Bad: while debugging, the model finds and fixes an unrelated warning, sees tests pass,
+and declares X fixed. No repro of X, no admin/user A path exercised.
+Failure: rule 1, rule 4, rule 5. Fix: reproduce X for user A first, then apply the
+hypothesis/evidence cycle; only after the repro passes may the answer claim a fix.
+````
+
+## `3-code/SKILL.md`
+
+````markdown
+---
+name: code-reasoning
+description: Root-branch-leaf planning and verification for writing new code or features: requirement plus checkable acceptance criteria at the root, branches for interface/data flow/core logic/error handling/edge cases/tests, leaves as runnable pieces each with its check, a mandatory criteria-to-proof mapping, then a tree-json block. Trigger on "write / implement / add a function, endpoint, CLI, script, module, integration", "we need a feature that does X", "extract this into a helper" (refactor with unchanged behavior), or any build request that must actually work. Do NOT use for explaining existing code, one-line or mechanical edits, review-only requests, or failures with an unknown cause (use debug-reasoning).
+---
+
+# Code Reasoning (requirement -> criteria -> runnable parts)
+
+Base shape, leaf rules, UP pass and `tree-json` output: `general-reasoning`
+(`1-general/SKILL.md`); this skill adds the requirement root and runnable leaves.
+
+## Purpose
+Build the smallest thing that satisfies stated acceptance criteria.
+
+## When to use
+- Writing a new feature, endpoint, function set, CLI, script or integration.
+- Behavior-preserving refactors (criteria = existing tests).
+- NOT for: known one-line fixes, explaining code, unknown-cause failures.
+
+## Procedure
+1. ROOT: requirement in one sentence + the output: a list of acceptance criteria, each
+   concrete and checkable ("returns 200 with `next` on 30 items"). Unstated
+   requirements -> explicit `ASSUMPTION:` lines.
+2. BRANCHES: choose 3-4 by risk from interface/structure, data flow, core logic, error
+   handling, edge cases, tests. Chooser table:
+   `references/decomposition-patterns.md`.
+3. LEAVES: the smallest runnable unit per branch - one function, one route, one test
+   case - each with the command or input that checks it. Unrunnable -> not a leaf.
+4. DOWN: write the interface first (signature, input/output shape, error shape), then
+   the smallest working version. Run each leaf's check when the leaf is written.
+5. UP: map EVERY acceptance criterion to a leaf that proves it. Uncovered criterion ->
+   new leaf, not a note. Code with no criterion -> delete.
+6. EDGE pass: empty, single, many, max, malformed, duplicate, missing permission,
+   concurrent (pick by domain; catalogue in the reference).
+7. OVER-ENGINEERING pass: delete what is not requested and not required by a criterion:
+   speculative abstraction, config for one caller, unused parameters, extra layers.
+8. REPORT: what was built, the exact verify command with its real output, the
+   criteria -> proof mapping, assumptions, untested items.
+9. EMIT the `tree-json` block with `domain: "code"`: root = requirement, branches =
+   chosen branches, leaves = parts with run evidence, `reverse_check` = one entry per
+   acceptance criterion (`pass` only when its proof leaf ran green).
+
+## Reverse check (code additions)
+On top of the base UP pass: does every criterion have a named proof? Do the parts
+satisfy the criteria together (integration, not only units)? Are edge cases covered by
+an executable leaf? Anything over-engineered or unrequested? Any leaf a stub, `TODO`,
+mock-only path or "will add later"?
+
+## Rules
+1. Acceptance criteria are listed and checkable before coding; none given -> state the
+   bounded `ASSUMPTION` you commit to. [G1][X2]
+2. Smallest working version first; extend only for a criterion. [G2][X2]
+3. Every leaf is runnable and is actually run during the work. [G1][G3]
+4. Every criterion maps to a proof leaf; unmapped -> not done. [G1][X2]
+5. No unrequested features, abstractions or config. [X1]
+6. Assumptions are written where the code depends on them. [G2][X1]
+7. No stubs, placeholders, no-ops or fake fallbacks in the delivered code. [X2]
+8. Report the verify command and its real output, never "should work". [G1]
+
+## Common mistakes
+- Coding before the criteria exist; the result solves a remembered problem (X2).
+- Only the happy path exercised; error/edge branches have no leaf (X2).
+- Adding a cache, plugin layer or generics "while we are here" (X1).
+- "Done" with paths that never ran; tests that assert mocks, not behavior.
+
+## Output (tree-json)
+`domain: "code"`. Criteria live in the root text (or as branches when they are the
+risk); a leaf is `status: "verified"` only when its check actually ran green. One
+`reverse_check` entry per criterion, `target` = the leaf that proves it. Schema:
+`../tree.schema.json`; rules: `../1-general/references/tree-format.md`.
+
+## Compact example (indented tree) + tree-json
+Task: add `GET /orders?limit=&cursor=`.
+```
+ROOT: paginated orders endpoint -> output: route + criteria + test run.
+├─ B1: interface
+│  └─ L1: response {items, next} matches api/schemas.py (review against C1)
+├─ B2: core logic
+│  └─ L2: keyset query (created_at,id) -> pytest -k paging: 4 passed (C1, C4)
+└─ B3: edges
+   ├─ L3: limit=101 -> 400 (C2), limit=0 -> 400 (test passed)
+   └─ L4: cursor="xx" -> 400 (C3); missing limit -> 20 (ASSUMPTION, docstring)
+UP: C1-C4 each map to a passing leaf; nothing beyond the criteria -> report + emit.
+```
+```tree-json
+{"version":1,"domain":"code","title":"Paginated GET /orders endpoint",
+ "root":{"id":"r","text":"add GET /orders?limit=&cursor= meeting C1-C4","children":[
+  {"id":"b1","text":"interface matches existing conventions","children":[
+    {"id":"b1-l1","text":"response {items, next} matches api/schemas.py","evidence":"schema file read; reviewed against C1","status":"verified"}]},
+  {"id":"b2","text":"core keyset query","children":[
+    {"id":"b2-l1","text":"paging works with a stable (created_at,id) order","evidence":"pytest -q tests/test_orders.py -k paging -> 4 passed","status":"verified"}]},
+  {"id":"b3","text":"edges rejected and defaults documented","children":[
+    {"id":"b3-l1","text":"limit=101 and limit=0 return 400","evidence":"test_limit_too_large, test_limit_zero passed","status":"verified"},
+    {"id":"b3-l2","text":"bad cursor returns 400; missing limit defaults to 20","evidence":"test_bad_cursor passed; ASSUMPTION in docstring","status":"verified"}]}]},
+ "reverse_check":[
+  {"target":"b2-l1","question":"C1: 200 with next on 30 items?","result":"pass","note":"test_paging_next green"},
+  {"target":"b3-l1","question":"C2: limit>100 rejected?","result":"pass","note":"test green"},
+  {"target":"b3-l2","question":"C3: bad cursor rejected?","result":"pass","note":"test green"},
+  {"target":"b2-l1","question":"C4: empty result returns 200 with []?","result":"pass","note":"test_empty green"}],
+ "conclusion":"Endpoint shipped: 6 tests green, no extra code beyond the four criteria."}
+```
+````
+
+## `3-code/references/decomposition-patterns.md`
+
+````markdown
+# Decomposition Patterns (code)
+
+Open this at step 2 to pick branches, at step 3 for leaf sizing, and at step 6 for the
+edge catalogue. Readable independently.
+
+## Branch chooser (pick 3-4 by risk, not all)
+| Branch | Use when | Leaf examples |
+|--------|----------|---------------|
+| Interface / structure | others consume it, or it replaces existing code | signature, schema, route list, module map (with the file that will hold each) |
+| Data flow | input shape is non-trivial or transformed | mapping table input field -> stored field; sample input/output pair |
+| Core logic | the algorithm is the risk | the one function + a run of its cases |
+| Error handling | failure must be visible to the caller | error codes + a test per error |
+| Edge cases | inputs are unbounded or user-supplied | test per edge (see catalogue) |
+| Tests / verification | criteria are numerous or subtle | one test name per criterion |
+
+## Leaf sizing
+- One leaf = one function, one route, one test case, one config change. If it needs
+  "and", split it.
+- Every leaf names its check: a test name, a command, or a concrete input/output pair.
+- Ordering: interface leaves first (they constrain the rest), then core, then edges.
+- A leaf that is only described in prose ("handle errors") is a branch, not a leaf.
+
+## Interface first
+Write the boundary before the body: name, inputs, outputs, error cases, side effects.
+If two leaves need a shared shape, fix the shape once and note the file where it lives.
+This prevents two incompatible halves written in one pass.
+
+## Assumptions log
+```
+ASSUMPTION: limit default 20 (not stated by requester) - affects C4
+ASSUMPTION: cursor is opaque base64 (matches existing API style)
+```
+Each assumption names the criterion or leaf it affects. Unused assumption -> delete.
+
+## Acceptance-criteria -> proof mapping (mandatory in the report)
+```
+C1 200 + next when 30 items -> tests/test_orders.py::test_paging_next (passed)
+C2 limit>100 -> 400          -> test_limit_too_large (passed)
+C3 bad cursor -> 400         -> test_bad_cursor (passed)
+C4 empty -> 200 []           -> test_empty (passed)
+```
+A criterion with no row is not done. A row with no run is not a proof.
+
+## Edge catalogue (choose by domain)
+- empty collection / empty string / null / missing field
+- single item / maximum size / maximum length / overflow
+- malformed, wrong type, unicode, path traversal, injection strings
+- duplicate keys, repeated calls (idempotency), retry after partial failure
+- boundary values: 0, 1, limit, limit+1, max int
+- permission denied, expired token, other user's resource
+- concurrency: two writers, cancel mid-flight, timeout
+
+## YAGNI filter (run before reporting)
+For each artifact ask: "which criterion requires this?" No answer -> delete.
+Typical offenders: caches, base classes with one subclass, config keys with one value,
+generics with one instantiation, hooks nobody calls, flags nobody flips.
+
+## Refactors
+Root = behavior must not change. Criteria = the characterization tests that exist
+before the change. Leaves = move + run the same tests after each move. New behavior in
+a refactor = a separate change, with its own criteria.
+````
+
+## `3-code/references/examples.md`
+
+````markdown
+# Examples (code reasoning)
+
+Good: G1-G3. Bad: X1-X2. "Supports" lines tie each example to the rules in `SKILL.md`.
+
+## G1 - New paginated endpoint
+Task: "Add `GET /orders?limit=&cursor=` to the existing FastAPI app."
+```
+ROOT: paginated orders endpoint -> output: route + criteria + test run.
+Criteria: C1 200 + next when 30 items; C2 limit>100 -> 400; C3 bad cursor -> 400;
+          C4 empty -> 200 [].
+├─ B1: interface
+│  ├─ L1: response `{items, next}` matches api/schemas.py conventions (read)
+│  └─ L2: error shape reused from api/errors.py:31 (read)
+├─ B2: core logic
+│  ├─ L3: keyset query (created_at,id) in orders/repo.py:60
+│  └─ L4: `pytest tests/test_orders.py -k paging` -> 4 passed
+└─ B3: edges
+   ├─ L5: limit=101 -> 400; limit=0 -> 400 (tests passed)
+   └─ L6: cursor="xx" -> 400 (test passed); missing limit -> 20 (ASSUMPTION in docstring)
+UP: criteria map C1->test_paging_next, C2->test_limit_too_large, C3->test_bad_cursor,
+C4->test_empty; all ran. No extra code: no cache, no filter params.
+Report: `pytest -q tests/test_orders.py` -> 6 passed.
+```
+Supports: rules 1, 3, 4, 8, and the criteria->proof mapping table.
+
+## G2 - Refactor with unchanged behavior
+Task: "Extract the retry loop from `client.py` into a helper."
+```
+ROOT: extract retry helper, behavior unchanged -> output: diff + same tests green.
+Criteria: C1 all existing client tests pass unchanged; C2 no new public API.
+├─ B1: characterize current behavior first
+│  ├─ L1: run tests/test_client.py -> 9 passed (before)
+│  └─ L2: 3 retry behaviors pinned: 5xx retried, 4xx not, jitter present (asserts)
+├─ B2: the move
+│  ├─ L3: new util/retry.py with signature (fn, attempts, base_delay)
+│  └─ L4: client.py:70-96 replaced by one call; no signature change (diff)
+└─ B3: edges kept
+   └─ L5: 4xx not retried test still passes; attempts=1 path covered (test)
+UP: C1 satisfied (9 passed after), C2 verified by diff (nothing new exported except the
+helper). ASSUMPTION: jitter distribution unchanged - stated, not silently altered.
+```
+Supports: rules 2, 4, 6; "Refactors" section of the patterns file.
+
+## G3 - CLI command with real edges
+Task: "Add `mytool dedupe <file>` that removes duplicate lines."
+```
+ROOT: dedupe subcommand -> output: command + criteria + run transcript.
+Criteria: C1 order preserved, first occurrence kept; C2 empty file ok; C3 file missing
+-> exit 2 + message; C4 1M lines under 5s.
+├─ B1: interface
+│  └─ L1: `dedupe [--in-place] FILE`, stdout mode default (argparse group, read)
+├─ B2: core logic
+│  └─ L2: seen-set preserving order (cli/dedupe.py:20) + unit cases (3 passed)
+├─ B3: edges/limits
+│  ├─ L3: empty file -> exit 0, no output (test); missing file -> exit 2 (test)
+│  └─ L4: 1M-line file -> 2.4s, memory 180MB (measure output, C4)
+UP: C1-C4 each mapped to a run; no extra features (no regex mode, no column pick) -
+candidates the model deliberately rejected.
+Report: `pytest -q tests/test_dedupe.py` -> 6 passed; timing run shown.
+```
+Supports: rules 1, 3, 5 (rejected extras), 8; edge catalogue entries empty/missing/size.
+
+## X1 - Unrequested machinery
+Task: "Add `mytool dedupe <file>`."
+Bad: builds a `DedupeStrategy` abstract base, a registry, a config section, and a
+`--strategy` flag; the single implementation is used once. Core behavior (order, exit
+codes) untested.
+Failure: rule 5, rule 4. Fix: one function + tests for C1-C4; abstract only when a
+second real strategy exists.
+
+## X2 - Criteria never formed, happy path only
+Task: "Add a CSV import endpoint."
+Bad: model writes the parser, runs one manual happy-path curl, says "done". No criteria
+list, so missing file, wrong delimiter, header mismatch, 10k rows, and duplicate keys
+are never exercised; the criterion "bad CSV -> 400 with row number" never existed.
+Failure: rules 1, 4, 7. Fix: write criteria first (including errors), map each to a
+test, run them; report the uncovered assumption (delimiter default = ",") explicitly.
+````
+
+## `4-web/SKILL.md`
+
+````markdown
+---
+name: web-reasoning
+description: Root-branch-leaf reasoning for building or changing web pages and apps (frontend, backend, full-stack): user-goal root with named flows, branches for UI/layout, data+state, API/backend, auth+security, performance, accessibility, deployment, leaves as checkable components/routes/queries/policies, then a full user-flow walk plus an attacker walk and a tree-json block. Trigger on "build / add / fix a page, form, flow, route, API, login, signup, checkout, dashboard, list view", on loading/error/empty-state work, and on reviews of auth, sessions or data exposure. Do NOT use for copy-only or static content edits, styling-only tweaks with a known target, or non-web code (use code-reasoning).
+---
+
+# Web Reasoning (user goal -> checkable web parts -> flow walk)
+
+Base shape, leaf rules, UP pass and `tree-json` output: `general-reasoning`
+(`1-general/SKILL.md`); this skill adds the user-goal root and the web branch set.
+
+## Purpose
+Deliver a flow that works for real users and fails safely, each part checked in a real
+browser or a real request.
+
+## When to use
+- New page, flow, route, API used by a UI, auth behavior, or a change to any of these.
+- NOT for: copy-only edits, static HTML with no logic, non-web code.
+
+## Procedure
+1. ROOT: the user's goal in one sentence ("a new user can create an account and reach
+   the dashboard"), the flows in scope, and the done-definition. Unstated product
+   decisions -> `ASSUMPTION:` lines.
+2. BRANCHES: choose 3-4 by risk from UI/layout, data+state, API/backend,
+   auth+security, performance, accessibility, deployment. Per-branch leaf shapes:
+   `references/web-branches.md`.
+3. LEAVES: named component/route/query/policy plus how it is checked: viewport render,
+   Network tab request, curl with/without token, keyboard walk, Lighthouse number.
+4. DOWN: mobile-first layout, then states, then data wiring, then backend, then
+   security hardening.
+5. STATES pass: every data surface has loading, error, empty, success (+ partial when
+   paginated). A missing state is a missing leaf, not a follow-up.
+6. UP: walk the full flow as a new user, entry to goal, on a 375px viewport - each step
+   works, no dead end, refresh/back do not break state; then walk it as an attacker: no
+   client-trusted input, no unauthorized route, no leaked field.
+7. REPORT: routes/files changed, the manual walk result, security leaves attempted and
+   their results, a11y/perf numbers, untested items.
+8. EMIT the `tree-json` block with `domain: "web"`: root = user goal, branches = chosen
+   branches, leaves = components/routes/policies with their result, `reverse_check` =
+   the flow walk, the attacker walk and each state check.
+
+## Reverse check (web additions)
+Does the flow complete end to end in a real browser? Are loading/error/empty/success all
+observable? Is every input validated server-side at the trust boundary (client
+validation is UX only)? Is authorization enforced per route on the server? Is any secret
+or unneeded field exposed to the client or logs? Does it survive refresh/back/double-submit?
+
+## Rules
+1. Root is the user's goal with the flows named; checkable done-definition. [G1][X2]
+2. Mobile-first: build the 375px layout before desktop. [G1][X2]
+3. Every data surface has loading, error, empty (and success) states. [G2][X1]
+4. Never trust client input; validate and authorize server-side, per route/resource -
+   hiding UI is not authorization. [G3][X1][X3]
+5. No secrets in the client bundle; return only the fields the UI needs. [X3]
+6. Walk the whole user flow in a browser and report the security leaves: what was
+   attempted, what was rejected. [G1][X2][G3]
+
+## Common mistakes
+- Happy path only; loading/error/empty states missing (X1).
+- Client-side validation treated as validation; the API accepts anything (X1).
+- Hiding a button instead of checking permission on the server (X3).
+- API returns the whole row; internal fields leak to the client (X3).
+- Flow never walked in a browser; auth redirect cases (deep link, expired session,
+  back button) untested (X2).
+
+## Output (tree-json)
+`domain: "web"`. Leaves name a route/component/policy and carry the observed result as
+`evidence` (`curl ... -> 403`, `375px render ok`, `Lighthouse LCP 1.9s`). A missing
+state or unrun probe is an `unverified` leaf, never a silent omission. Schema:
+`../tree.schema.json`; rules: `../1-general/references/tree-format.md`.
+
+## Compact example (indented tree) + tree-json
+Task: saved-items page for logged-in users.
+```
+ROOT: a logged-in user can view and remove saved items -> page + route + checks.
+├─ B1: UI/states
+│  ├─ L1: 375px render shows list and reachable remove button
+│  └─ L2: loading skeleton, error retry, empty text observed
+├─ B2: data/API
+│  ├─ L3: GET /api/saved returns items[] only (no internal fields)
+│  └─ L4: DELETE /api/saved/:id -> 204; repeat -> 404
+└─ B3: auth/security
+   └─ L5: no token -> 401; other user's id -> 404 (not 200)
+UP: logged-in walk ok; logged-out deep link returns after login; refresh keeps state.
+```
+```tree-json
+{"version":1,"domain":"web","title":"Saved-items page (logged-in users)",
+ "root":{"id":"r","text":"a logged-in user can view and remove saved items","children":[
+  {"id":"b1","text":"UI and states","children":[
+    {"id":"b1-l1","text":"375px: list visible, remove button reachable","evidence":"manual render at 375px, screenshot","status":"verified"},
+    {"id":"b1-l2","text":"loading, error, empty states all observable","evidence":"throttled network + forced 500 + 0-row account","status":"verified"}]},
+  {"id":"b2","text":"data and API","children":[
+    {"id":"b2-l1","text":"GET /api/saved returns items[] only","evidence":"curl -s /api/saved -> {items:[{id,title,url}]}","status":"verified"},
+    {"id":"b2-l2","text":"DELETE is idempotent-safe","evidence":"curl -X DELETE -> 204; repeat -> 404","status":"verified"}]},
+  {"id":"b3","text":"auth and security","children":[
+    {"id":"b3-l1","text":"unauthenticated and cross-user access blocked","evidence":"curl no token -> 401; other user's id -> 404","status":"verified"}]}]},
+ "reverse_check":[
+  {"target":"b2-l1","question":"does the response leak internal fields?","result":"pass","note":"body inspected, 3 fields only"},
+  {"target":"b3-l1","question":"is authorization enforced server-side, not by hiding UI?","result":"pass","note":"curl bypasses UI and is rejected"},
+  {"target":"b1-l2","question":"does every data surface handle loading/error/empty?","result":"pass","note":"all three observed manually"}],
+ "conclusion":"Page shipped: flow walked at 375px, states observed, authz and field exposure checked by curl."}
+```
+````
+
+## `4-web/references/web-branches.md`
+
+````markdown
+# Web Branches and Leaf Shapes
+
+Open this at step 2 of `SKILL.md` to pick branches, and at step 3 to phrase leaves.
+Readable independently.
+
+## Branch table (pick 3-4 by risk)
+| Branch | Use when | Leaf shape |
+|--------|----------|-----------|
+| UI / layout | any visual surface | "375px render: <element> visible/clickable" + screenshot path |
+| Data + state | anything fetched or mutated | "loading/error/empty/success each observed: <how>" |
+| API / backend | new or changed route | "curl <cmd> -> <status + body shape>" |
+| Auth + security | users, sessions, private data | "curl without token -> 401; other user's id -> 404" |
+| Performance | lists, images, large payloads | "Lighthouse LCP <n>; payload <n>KB; <n> queries" |
+| Accessibility | forms, nav, interactive UI | "Tab order reaches submit in <n>; labels present; contrast ratio" |
+| Deployment | env vars, migrations, rollback | "build with prod env ok; migration reversible; rollback step named" |
+
+## States matrix (every data surface, no exceptions)
+| State | Check |
+|-------|-------|
+| loading | skeleton/spinner visible before data arrives (throttle network) |
+| error | failure of the request shows retry, not a blank screen |
+| empty | zero results show explicit text + the next action |
+| success | data renders, layout does not jump |
+| partial/paginated | page 2 works, `next` absent at the end, no duplicate rows |
+| mutation in flight | button disabled, double-submit prevented |
+| mutation failed | error surfaced, state not falsely updated |
+
+## Security leaves (attempt, then report)
+- Send tampered input straight to the API (skip the form): status?
+- Request another user's resource id: 404/403, never 200.
+- Request a private route with no/expired token: redirect to login, no data in HTML.
+- Inspect the response body: only fields the UI needs; no internal ids/flags/PII.
+- Inspect the bundle and page source: no API keys, tokens, or admin endpoints.
+- Check HTML sinks for user content (XSS), and POST forms for CSRF protection.
+- Check server-side validation of every required field (type, range, length).
+
+## Performance leaves
+- Budget first ("LCP < 2.5s on mobile"), then measure (Lighthouse/WebPageTest), then the
+  dominant cause (image size, blocking script, query count), then a re-measure.
+- Lists: virtualize or paginate; report item count and render time, not opinions.
+
+## Accessibility leaves
+- Keyboard-only path to the primary action; visible focus.
+- Every input has a label; errors are text, not colour only.
+- Images have alt text that states purpose; contrast ratio recorded.
+- The flow works at 200% zoom and at 375px width.
+
+## Deployment leaves
+- Env vars needed listed, with the failure mode if missing.
+- Migration: forward step + reversible step, or explicitly irreversible with a backup.
+- Rollback: the exact command/flag and what state it leaves behind.
+
+## Trust-boundary rule
+Client validation = UX. Server validation = correctness and security. Every leaf that
+touches user input names the server-side check, even when the UI already prevents it.
+````
+
+## `4-web/references/examples.md`
+
+````markdown
+# Examples (web reasoning)
+
+Good: G1-G3. Bad: X1-X2. "Supports" lines tie each example to the rules in `SKILL.md`.
+
+## G1 - Login + session
+Task: "Add email/password login to the app."
+```
+ROOT: a user can log in and stay logged in -> output: login page + session + checks.
+Flows: /login submit, wrong password, logged-out deep link, logout.
+├─ B1: UI/states
+│  ├─ L1: 375px: fields + submit reachable, error text under field (manual)
+│  └─ L2: loading state disables submit; server error shows retry (manual)
+├─ B2: API
+│  ├─ L3: POST /api/login 200 sets HttpOnly cookie (curl -i, header shown)
+│  └─ L4: POST /api/login wrong pw -> 401, generic message (curl)
+├─ B3: security
+│  ├─ L5: cookie HttpOnly+Secure+SameSite=Lax (header check)
+│  ├─ L6: 10 failed attempts -> 429 (script output)
+│  └─ L7: GET /dashboard no cookie -> 302 /login?next=/dashboard (curl)
+└─ B4: flow completion
+   ├─ L8: after login -> /dashboard; refresh stays; logout -> cookie cleared (manual)
+   └─ L9: deep link round trip: /settings -> login -> back to /settings (manual)
+UP: all four states observed (L2), no error-message user enumeration (L4 generic), the
+walk completes (L8, L9). Report: routes, curl transcripts, cookie flags, screenshot.
+```
+Supports: rules 1, 2 (375px first), 3, 4 (server-side auth), 5, 7, 8.
+
+## G2 - Dashboard with real fetch states
+Task: "User dashboard showing recent activity."
+```
+ROOT: user opens dashboard and sees recent activity, incl. failure cases -> page + checks.
+├─ B1: states
+│  ├─ L1: throttled network -> skeleton, no layout jump (manual)
+│  ├─ L2: /api/activity 500 -> error + retry button; retry succeeds (manual)
+│  └─ L3: new user, 0 rows -> "no activity yet" + link to start (manual)
+├─ B2: data
+│  ├─ L4: GET /api/activity -> {items:[{ts,type,summary}]} only (curl)
+│  └─ L5: page 2 + end-of-list behavior, no dup rows (curl, 2 calls)
+└─ B3: performance
+   ├─ L6: 200 items -> 1 request, 42KB, LCP 1.9s mobile (Lighthouse)
+   └─ L7: before fix 480KB -> cause: un-sized avatar images (report)
+UP: states L1-L3 all seen; L4 shows no internal fields; L6/L7 measured with the fix in
+place and re-measured. Report includes the numbers, not "fast enough".
+Supports: rules 3, 6, 7, 9; performance leaves (budget -> measure -> cause -> re-measure).
+
+## G3 - Full-stack CRUD with authorization
+Task: "Let users edit their own posts."
+```
+ROOT: a user can edit only their own post -> edit page + API + authz checks.
+├─ B1: API/data
+│  ├─ L1: PUT /api/posts/:id 200, updated_at changes (curl)
+│  └─ L2: body with extra field `role:"admin"` -> ignored, not written (curl + row read)
+├─ B2: validation
+│  ├─ L3: title "" -> 400 with field error; 10k chars -> 400 (curl)
+│  └─ L4: id "xx" -> 400; unknown id -> 404 (curl)
+├─ B3: authorization
+│  ├─ L5: user B edits user A's post -> 403, row unchanged (curl + row read)
+│  └─ L6: UI hides the button for others, but L5 proves the server also blocks (manual)
+└─ B4: flow
+   ├─ L7: edit -> save -> refresh -> value persisted; back button safe (manual)
+   └─ L8: concurrent save from two tabs -> last-write-wins documented (manual)
+UP: flow completes, server-side authz proven (L5), mass-assignment blocked (L2), no
+unrequested features. Report: routes, curl transcripts, the rejected-field check.
+Supports: rules 4, 5, 6, 8; "Security leaves" list in the branches file.
+
+## X1 - Happy path only, client-side validation trusted
+Task: "Add a signup form."
+Bad: form renders on desktop, submit with valid data works in one manual test. No
+loading/error states, no server-side validation (API stores `""` email), no duplicate
+account handling. Told "the browser blocks empty fields", so the API is not checked.
+Failure: rules 3, 4, 7. Fix: server-side validation leaves (empty, wrong type, duplicate,
+too long) + error/loading states + a curl run that bypasses the form.
+
+## X2 - Flow never walked, desktop-only
+Task: "Add a checkout page."
+Bad: unit tests for the cart total pass; the page is built at 1280px. In a real browser
+at 375px the "Pay" button is off-screen, and after payment the redirect goes back to the
+cart with the item still present. Reported as done because tests were green.
+Failure: rules 1, 2, 7. Fix: define the done-definition as the full flow (cart ->
+pay -> confirmation, cart emptied), build mobile-first, and walk it in the browser
+before reporting.
+````
+
+## `visualizer/index.html`
+
+````html
+<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tree-json visualizer</title>
+  <meta name="description" content="Offline visualizer for tree-json reasoning trees: paste, validate, render, play DOWN/UP, edit, export.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#tree-area" data-i18n="skipToTree">Skip to tree</a>
+
+  <header class="topbar">
+    <h1 data-i18n="appTitle">tree-json visualizer</h1>
+
+    <div class="health" id="health" role="status" aria-live="polite">
+      <span class="verdict" id="verdict">-</span>
+      <span class="pill g" id="pill-verified"><span aria-hidden="true">&#10003;</span><span id="count-verified">0</span> <span data-i18n="verified">verified</span></span>
+      <span class="pill a" id="pill-unverified"><span aria-hidden="true">?</span><span id="count-unverified">0</span> <span data-i18n="unverified">unverified</span></span>
+      <span class="pill r" id="pill-failed"><span aria-hidden="true">&#10007;</span><span id="count-failed">0</span> <span data-i18n="failed">failed</span></span>
+      <span class="pill" id="pill-rc"><span id="count-rc">0</span> <span data-i18n="rcIssues">check fails/gaps</span></span>
+      <ul class="blocking" id="blocking" aria-label="Blocking nodes"></ul>
+    </div>
+
+    <div class="top-actions">
+      <label><span data-i18n="theme">Theme</span>
+        <select id="theme">
+          <option value="auto" data-i18n="themeAuto">Auto</option>
+          <option value="light" data-i18n="themeLight">Light</option>
+          <option value="dark" data-i18n="themeDark">Dark</option>
+        </select>
+      </label>
+      <label><span data-i18n="language">Language</span>
+        <select id="lang">
+          <option value="en">English</option>
+          <option value="vi">Tiếng Việt</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ---------- INPUT ---------- -->
+    <section class="panel input" aria-labelledby="input-h">
+      <h2 id="input-h" data-i18n="inputTitle">Input</h2>
+      <label class="visually-hidden" for="input" data-i18n="inputLabel">tree-json or markdown containing a tree-json block</label>
+      <textarea id="input" rows="12" spellcheck="false" data-i18n-ph="inputPlaceholder"></textarea>
+
+      <div class="row">
+        <button class="primary" id="btn-render" data-i18n="render">Render</button>
+        <button id="btn-upload" data-i18n="upload">Upload file</button>
+        <input type="file" id="file" accept=".json,.md,.txt,application/json" class="visually-hidden" aria-hidden="true" tabindex="-1">
+      </div>
+      <div class="row">
+        <label class="grow"><span class="visually-hidden" data-i18n="example">Example</span>
+          <select id="example">
+            <option value="" data-i18n="chooseExample">Load example...</option>
+            <option value="general">general - all green</option>
+            <option value="debug">debug - failed leaf</option>
+            <option value="code">code - reverse-check gap</option>
+            <option value="web">web - deeply nested</option>
+          </select>
+        </label>
+      </div>
+      <ul class="errors" id="errors" aria-live="polite"></ul>
+      <ul class="legend" id="legend">
+        <li><span aria-hidden="true">&#10003;</span> <span data-i18n="legendGreen">verified leaf / all children green</span></li>
+        <li><span aria-hidden="true">?</span> <span data-i18n="legendAmber">unverified leaf / mixed children</span></li>
+        <li><span aria-hidden="true">&#10007;</span> <span data-i18n="legendRed">failed leaf / any child red</span></li>
+        <li><span data-i18n="legendShape">Amber is dashed, red is dotted, so colour is never the only signal.</span></li>
+      </ul>
+      <p class="hint" data-i18n="privacyHint">Everything stays in this page: no network calls, no upload.</p>
+    </section>
+
+    <!-- ---------- TREE ---------- -->
+    <section class="panel tree" id="tree-area" aria-labelledby="tree-h">
+      <h2 class="visually-hidden" id="tree-h" data-i18n="treeTitle">Tree</h2>
+
+      <div class="toolbar" role="toolbar" aria-label="Tree controls">
+        <div class="group">
+          <button id="btn-down" data-i18n="modeDown">DOWN</button>
+          <button id="btn-up" data-i18n="modeUp">UP</button>
+          <button id="btn-show-all" data-i18n="showAll">Show all</button>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-play" data-i18n="play">Play</button>
+          <button id="btn-step-back" data-i18n="stepBack">Step -</button>
+          <button id="btn-step-fwd" data-i18n="stepForward">Step +</button>
+          <span class="badge" id="play-status">-</span>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <label class="hint" for="speed" data-i18n="speed">Speed</label>
+          <input type="range" id="speed" min="0.5" max="3" step="0.5" value="1">
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-zoom-out" aria-label="Zoom out">-</button>
+          <button id="btn-zoom-in" aria-label="Zoom in">+</button>
+          <button id="btn-fit" data-i18n="fit">Fit</button>
+          <span class="badge" id="zoom-badge">100%</span>
+        </div>
+        <div class="sep" aria-hidden="true"></div>
+        <div class="group">
+          <button id="btn-expand" data-i18n="expandAll">Expand all</button>
+          <button id="btn-copy" data-i18n="copyJson">Copy JSON</button>
+          <button id="btn-download" data-i18n="downloadJson">Download JSON</button>
+          <button id="btn-svg" data-i18n="exportSvg">Export SVG</button>
+          <button id="btn-png" data-i18n="exportPng">Export PNG</button>
+        </div>
+      </div>
+
+      <svg id="svg" tabindex="0" role="tree" aria-label="Reasoning tree"></svg>
+      <p class="empty" id="empty" data-i18n="emptyState">Paste tree-json and press Render, or load an example.</p>
+    </section>
+
+    <!-- ---------- DETAILS ---------- -->
+    <aside class="panel details" id="details" aria-labelledby="details-h">
+      <h2 id="details-h" data-i18n="detailsTitle">Node details</h2>
+      <div id="details-body"><p class="hint" data-i18n="noSelection">Click a node to see its text, evidence, status and reverse checks.</p></div>
+    </aside>
+  </main>
+
+  <script src="examples/data.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
+````
+
+## `visualizer/style.css`
+
+````css
+/* tree-json visualizer - plain CSS, light/dark, no external assets.
+   Sections: tokens, base, layout, panels, tree, details, playback, mobile. */
+
+/* ---------- tokens ---------- */
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --panel-2: #f0f2f5;
+  --text: #14181d;
+  --muted: #5b6572;
+  --border: #d6dbe1;
+  --accent: #2b6cb0;
+  --green: #1b7f4b;
+  --amber: #a86a00;
+  --red: #b3261e;
+  --green-bg: #e6f4ec;
+  --amber-bg: #fdf3dd;
+  --red-bg: #fdeceb;
+  --none-bg: #eceff3;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .08), 0 1px 3px rgba(16, 24, 40, .06);
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --bg: #14171c;
+    --panel: #1c2027;
+    --panel-2: #232830;
+    --text: #e8ecf1;
+    --muted: #a3adba;
+    --border: #303742;
+    --accent: #6aa6e8;
+    --green: #4ec98a;
+    --amber: #e0ab4a;
+    --red: #f08a83;
+    --green-bg: #18301f;
+    --amber-bg: #33290f;
+    --red-bg: #3a1d1a;
+    --none-bg: #262c34;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c;
+  --panel: #1c2027;
+  --panel-2: #232830;
+  --text: #e8ecf1;
+  --muted: #a3adba;
+  --border: #303742;
+  --accent: #6aa6e8;
+  --green: #4ec98a;
+  --amber: #e0ab4a;
+  --red: #f08a83;
+  --green-bg: #18301f;
+  --amber-bg: #33290f;
+  --red-bg: #3a1d1a;
+  --none-bg: #262c34;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+}
+
+/* ---------- base ---------- */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--font);
+}
+h1 { font-size: 16px; margin: 0; font-weight: 650; }
+h2 { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+button, select, input, textarea { font: inherit; color: inherit; }
+button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+select, input[type="text"], textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  width: 100%;
+}
+textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.skip {
+  position: absolute; left: -9999px; top: 0; background: var(--panel);
+  padding: 8px; z-index: 10;
+}
+.skip:focus { left: 8px; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* ---------- top bar ---------- */
+.topbar {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 5;
+}
+.health { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex: 1 1 320px; }
+.verdict {
+  font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+}
+.verdict.ready { color: var(--green); background: var(--green-bg); border-color: var(--green); }
+.verdict.notready { color: var(--red); background: var(--red-bg); border-color: var(--red); }
+.pill {
+  display: inline-flex; gap: 5px; align-items: center;
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; font-size: 12.5px;
+}
+.pill.g { color: var(--green); background: var(--green-bg); }
+.pill.a { color: var(--amber); background: var(--amber-bg); }
+.pill.r { color: var(--red); background: var(--red-bg); }
+.blocking { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.blocking button { font-size: 12px; padding: 2px 8px; }
+.top-actions { display: flex; gap: 10px; align-items: center; }
+.top-actions label { display: flex; gap: 5px; align-items: center; font-size: 12.5px; color: var(--muted); }
+.top-actions select { width: auto; }
+
+/* ---------- layout ---------- */
+.layout {
+  display: grid; gap: 10px; padding: 10px;
+  grid-template-columns: 320px minmax(0, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr);
+  height: calc(100vh - 52px);
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px; box-shadow: var(--shadow); overflow: auto; min-height: 0;
+}
+.panel.tree { display: flex; flex-direction: column; overflow: hidden; padding: 6px; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+.row > * { flex: 0 0 auto; }
+.row .grow { flex: 1 1 auto; }
+.hint { color: var(--muted); font-size: 12px; }
+.errors { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; }
+.errors li {
+  background: var(--red-bg); color: var(--red); border: 1px solid var(--red);
+  border-radius: 8px; padding: 5px 8px; font-size: 12.5px;
+}
+.errors li.warn { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
+.errors code { font-family: var(--mono); }
+
+/* ---------- tree ---------- */
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 4px 4px 8px; border-bottom: 1px solid var(--border);
+}
+.toolbar .group { display: flex; gap: 4px; align-items: center; }
+.toolbar .sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+.toolbar input[type="range"] { width: 90px; }
+.badge {
+  font-size: 12px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 8px;
+}
+svg#svg { flex: 1 1 auto; width: 100%; min-height: 0; touch-action: none; cursor: grab; }
+svg#svg:active { cursor: grabbing; }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+
+/* node cards; status is also encoded by icon + stroke pattern (colorblind safe) */
+.node .card { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; }
+.node .label { fill: var(--text); font: 12.5px var(--font); }
+.node .icon { font: 700 13px var(--font); }
+.node .toggle { font: 13px var(--font); fill: var(--muted); cursor: pointer; }
+.node.status-green .card { fill: var(--green-bg); stroke: var(--green); stroke-width: 2; }
+.node.status-green .icon { fill: var(--green); }
+.node.status-amber .card { fill: var(--amber-bg); stroke: var(--amber); stroke-width: 2; stroke-dasharray: 6 4; }
+.node.status-amber .icon { fill: var(--amber); }
+.node.status-red .card { fill: var(--red-bg); stroke: var(--red); stroke-width: 2; stroke-dasharray: 3 3; }
+.node.status-red .icon { fill: var(--red); }
+.node.status-none .card { fill: var(--none-bg); stroke: var(--border); stroke-dasharray: 2 5; }
+.node.status-none .icon { fill: var(--muted); }
+.node.selected .card { stroke: var(--accent); stroke-width: 3; stroke-dasharray: none; }
+.node.highlight .card { stroke: var(--accent); stroke-width: 3; }
+.edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.edge.up { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 7 5; }
+
+/* ---------- details ---------- */
+.field { margin-top: 8px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.meta { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
+.rc-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.rc-list li { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12.5px; }
+.rc-list .res { font-weight: 700; }
+.rc-list .res.pass { color: var(--green); }
+.rc-list .res.fail { color: var(--red); }
+.rc-list .res.gap { color: var(--amber); }
+.legend { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; color: var(--muted); display: grid; gap: 3px; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .panel.details { grid-column: 1 / -1; max-height: 42vh; }
+}
+@media (max-width: 720px) {
+  .layout { display: block; height: auto; padding: 8px; }
+  .panel { margin-bottom: 8px; max-height: none; }
+  .panel.tree { height: 62vh; }
+  .panel.details { position: sticky; bottom: 0; z-index: 4; border-radius: var(--radius) var(--radius) 0 0; }
+  .topbar { position: static; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+````
+
+## `visualizer/app.js`
+
+````javascript
+'use strict';
+/* ============================================================================
+   tree-json visualizer
+   Plain HTML/CSS/JS. No build step, no framework, no network calls.
+   Sections: i18n, state, DOM helpers, parsing, validation, status,
+             layout, render, details + editing, playback, zoom/pan,
+             export, storage, keyboard, init.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 1. i18n */
+const I18N = {
+  en: {
+    appTitle: 'tree-json visualizer',
+    skipToTree: 'Skip to tree',
+    theme: 'Theme', themeAuto: 'Auto', themeLight: 'Light', themeDark: 'Dark',
+    language: 'Language',
+    inputTitle: 'Input',
+    inputLabel: 'tree-json or markdown containing a tree-json block',
+    inputPlaceholder: 'Paste tree-json here, or a whole markdown answer containing a ```tree-json block...',
+    render: 'Render', upload: 'Upload file', example: 'Example', chooseExample: 'Load example...',
+    treeTitle: 'Tree', detailsTitle: 'Node details',
+    verified: 'verified', unverified: 'unverified', failed: 'failed', rcIssues: 'check fails/gaps',
+    verdictReady: 'READY', verdictNotReady: 'NOT READY',
+    blockingTitle: 'Blocking:', blockLeaf: 'leaf {status}', blockRc: 'check {result}',
+    blockInvalid: 'tree invalid: {n} validation errors',
+    modeDown: 'DOWN', modeUp: 'UP', showAll: 'Show all', play: 'Play', pause: 'Pause',
+    stepBack: 'Step -', stepForward: 'Step +', speed: 'Speed', fit: 'Fit',
+    expandAll: 'Expand all', copyJson: 'Copy JSON', downloadJson: 'Download JSON',
+    exportSvg: 'Export SVG', exportPng: 'Export PNG',
+    emptyState: 'Paste tree-json and press Render, or load an example.',
+    noSelection: 'Click a node to see its text, evidence, status and reverse checks.',
+    legendGreen: 'verified leaf / all children green',
+    legendAmber: 'unverified leaf / mixed children',
+    legendRed: 'failed leaf / any child red',
+    legendShape: 'Amber is dashed, red is dotted, so colour is never the only signal.',
+    privacyHint: 'Everything stays in this page: no network calls, no upload.',
+    edit: 'Edit', save: 'Save', cancel: 'Cancel', addChild: 'Add child',
+    deleteNode: 'Delete node', text: 'Text', evidence: 'Evidence', status: 'Status',
+    reverseChecks: 'Reverse checks targeting this node', none: 'none',
+    copied: 'Copied', copyFailed: 'Copy failed - select and copy manually',
+    newNodeText: 'new sub-problem', newEvidence: 'TODO - replace with real evidence',
+    playbackIdle: 'idle', playbackAll: 'full tree', playbackStep: 'step {i}/{n}',
+    errEmpty: 'Nothing to parse: paste tree-json or a markdown block.',
+    errJson: 'Invalid JSON: {msg}',
+    errNotObject: 'The parsed value is not an object.',
+    errRoot: 'Missing "root" node.',
+    errVersion: 'version must be the number 1.',
+    errDomain: 'domain must be one of general | debug | code | web.',
+    errTitle: 'title must be a non-empty string.',
+    errNodeType: 'node must be an object.',
+    errId: 'node id must be a non-empty string.',
+    errDuplicateId: 'duplicate id "{id}" - ids must be unique.',
+    errText: 'node text must be a non-empty string.',
+    errLeafEvidence: 'leaf missing evidence (required on leaves, min length 1).',
+    errLeafStatus: 'leaf missing status (verified | unverified | failed).',
+    errChildrenType: 'children must be an array.',
+    errChildrenMin: 'children must have 1-4 items: remove the key for a leaf.',
+    errChildrenMax: 'children must have 1-4 items: split or merge branches.',
+    errRcType: 'reverse_check must be an array.',
+    errRcItem: 'reverse_check item must be an object.',
+    errRcTarget: 'reverse_check.target must be a non-empty node id.',
+    errRcUnknownTarget: 'reverse_check.target "{id}" does not match any node id.',
+    errRcQuestion: 'reverse_check.question must be a non-empty string.',
+    errRcResult: 'reverse_check.result must be pass | fail | gap.',
+    errConclusion: 'conclusion must be a string.',
+    errConclusionEarly: 'conclusion is written while a check is fail/gap: fix the branch first.',
+    rootLabel: 'root'
+  },
+  vi: {
+    appTitle: 'tr&#7921;c quan ho&#225; tree-json',
+    skipToTree: 'T&#7899;i c&#226;y l&#253; lu&#7853;n',
+    theme: 'Giao di&#7879;n', themeAuto: 'T&#7921; &#273;&#7897;ng', themeLight: 'S&#225;ng', themeDark: 'T&#7889;i',
+    language: 'Ng&#244;n ng&#7919;',
+    inputTitle: 'D&#7919; li&#7879;u v&#224;o',
+    inputLabel: 'tree-json ho&#7863;c markdown ch&#7913;a kh&#7889;i tree-json',
+    inputPlaceholder: 'D&#225;n tree-json v&#224;o &#273;&#226;y, ho&#7863;c d&#225;n c&#7843; c&#226;u tr&#7843; l&#7901;i markdown c&#243; kh&#7889;i ```tree-json...',
+    render: 'Hi&#7875;n th&#7883;', upload: 'T&#7843;i t&#7879;p', example: 'V&#237; d&#7909;', chooseExample: 'Ch&#7885;n v&#237; d&#7909;...',
+    treeTitle: 'C&#226;y', detailsTitle: 'Chi ti&#7871;t n&#250;t',
+    verified: '&#273;&#227; x&#225;c minh', unverified: 'ch&#432;a x&#225;c minh', failed: 'th&#7845;t b&#7841;i', rcIssues: 'l&#7895;i/thi&#7871;u ki&#7875;m tra',
+    verdictReady: 'S&#7860;N S&#192;NG', verdictNotReady: 'CH&#431;A S&#7860;N S&#192;NG',
+    blockingTitle: 'Ch&#7863;n:', blockLeaf: 'l&#225; {status}', blockRc: 'ki&#7875;m tra {result}',
+    blockInvalid: 'c&#226;y sai: {n} l&#7895;i ki&#7875;m tra',
+    modeDown: 'XU&#7888;NG', modeUp: 'L&#202;N', showAll: 'Xem t&#7845;t c&#7843;', play: 'Ch&#7841;y', pause: 'D&#7915;ng',
+    stepBack: 'L&#249;i', stepForward: 'Ti&#7871;n', speed: 'T&#7889;c &#273;&#7897;', fit: 'V&#7915;a khung',
+    expandAll: 'M&#7903; h&#7871;t', copyJson: 'Sao ch&#233;p JSON', downloadJson: 'T&#7843;i JSON',
+    exportSvg: 'Xu&#7845;t SVG', exportPng: 'Xu&#7845;t PNG',
+    emptyState: 'D&#225;n tree-json v&#224; b&#7845;m Hi&#7875;n th&#7883;, ho&#7863;c ch&#7885;n m&#7897;t v&#237; d&#7909;.',
+    noSelection: 'B&#7845;m m&#7897;t n&#250;t &#273;&#7875; xem n&#7897;i dung, b&#7857;ng ch&#7913;ng, tr&#7841;ng th&#225;i v&#224; ki&#7875;m tra ng&#432;&#7907;c.',
+    legendGreen: 'l&#225; &#273;&#227; x&#225;c minh / m&#7885;i con xanh',
+    legendAmber: 'l&#225; ch&#432;a x&#225;c minh / con h&#7895;n h&#7907;p',
+    legendRed: 'l&#225; th&#7845;t b&#7841;i / c&#243; con &#273;&#7887;',
+    legendShape: 'V&#224;ng l&#224; n&#233;t &#273;&#7913;t, &#273;&#7887; l&#224; n&#233;t ch&#7845;m: m&#224;u kh&#244;ng ph&#7843;i t&#237;n hi&#7879;u duy nh&#7845;t.',
+    privacyHint: 'M&#7885;i th&#7913; &#7903; l&#7841;i trong trang: kh&#244;ng g&#7885;i m&#7841;ng, kh&#244;ng t&#7843;i l&#234;n.',
+    edit: 'S&#7917;a', save: 'L&#432;u', cancel: 'Hu&#7927;', addChild: 'Th&#234;m n&#250;t con',
+    deleteNode: 'Xo&#225; n&#250;t', text: 'N&#7897;i dung', evidence: 'B&#7857;ng ch&#7913;ng', status: 'Tr&#7841;ng th&#225;i',
+    reverseChecks: 'Ki&#7875;m tra ng&#432;&#7907;c li&#234;n quan', none: 'kh&#244;ng c&#243;',
+    copied: '&#272;&#227; sao ch&#233;p', copyFailed: 'Sao ch&#233;p th&#7845;t b&#7841;i - h&#227;y ch&#7885;n v&#224; sao ch&#233;p th&#7911; c&#244;ng',
+    newNodeText: 'v&#7845;n &#273;&#7873; con m&#7899;i', newEvidence: 'TODO - thay b&#7857;ng b&#7857;ng ch&#7913;ng th&#7853;t',
+    playbackIdle: 'ch&#7901;', playbackAll: 'to&#224;n b&#7897; c&#226;y', playbackStep: 'b&#432;&#7899;c {i}/{n}',
+    errEmpty: 'Kh&#244;ng c&#243; g&#236; &#273;&#7875; ph&#226;n t&#237;ch: h&#227;y d&#225;n tree-json ho&#7863;c kh&#7889;i markdown.',
+    errJson: 'JSON kh&#244;ng h&#7907;p l&#7879;: {msg}',
+    errNotObject: 'Gi&#225; tr&#7883; kh&#244;ng ph&#7843;i l&#224; object.',
+    errRoot: 'Thi&#7871;u n&#250;t "root".',
+    errVersion: 'version ph&#7843;i l&#224; s&#7889; 1.',
+    errDomain: 'domain ph&#7843;i thu&#7897;c general | debug | code | web.',
+    errTitle: 'title ph&#7843;i l&#224; chu&#7895;i kh&#244;ng r&#7895;ng.',
+    errNodeType: 'n&#250;t ph&#7843;i l&#224; object.',
+    errId: 'id n&#250;t ph&#7843;i l&#224; chu&#7895;i kh&#244;ng r&#7895;ng.',
+    errDuplicateId: 'id tr&#249;ng "{id}" - id ph&#7843;i duy nh&#7845;t.',
+    errText: 'text n&#250;t ph&#7843;i l&#224; chu&#7895;i kh&#244;ng r&#7895;ng.',
+    errLeafEvidence: 'l&#225; thi&#7871;u evidence (b&#7855;t bu&#7897;c, &#237;t nh&#7845;t 1 k&#253; t&#7921;).',
+    errLeafStatus: 'l&#225; thi&#7871;u status (verified | unverified | failed).',
+    errChildrenType: 'children ph&#7843;i l&#224; m&#7843;ng.',
+    errChildrenMin: 'children ph&#7843;i c&#243; 1-4 ph&#7847;n t&#7917;: b&#7887; kho&#225; n&#7871;u l&#224; l&#225;.',
+    errChildrenMax: 'children t&#7889;i &#273;a 4: h&#227;y t&#225;ch ho&#7863;c h&#7907;p nh&#225;nh.',
+    errRcType: 'reverse_check ph&#7843;i l&#224; m&#7843;ng.',
+    errRcItem: 'ph&#7847;n t&#7917; reverse_check ph&#7843;i l&#224; object.',
+    errRcTarget: 'reverse_check.target ph&#7843;i l&#224; id n&#250;t kh&#244;ng r&#7895;ng.',
+    errRcUnknownTarget: 'reverse_check.target "{id}" kh&#244;ng kh&#7899;p n&#250;t n&#224;o.',
+    errRcQuestion: 'reverse_check.question ph&#7843;i l&#224; chu&#7895;i kh&#244;ng r&#7895;ng.',
+    errRcResult: 'reverse_check.result ph&#7843;i l&#224; pass | fail | gap.',
+    errConclusion: 'conclusion ph&#7843;i l&#224; chu&#7895;i.',
+    errConclusionEarly: 'conclusion &#273;&#432;&#7907;c vi&#7871;t khi c&#242;n fail/gap: h&#227;y s&#7917;a nh&#225;nh tr&#432;&#7899;c.',
+    rootLabel: 'g&#7889;c'
+  }
+};
+/* The `vi` dictionary is authored with numeric HTML entities so app.js stays ASCII.
+   Decode them once here so textContent renders real Vietnamese characters. Only our
+   own dictionary strings are touched; no user data passes through this. */
+function decodeNumericEntities(s) {
+  return String(s).replace(/&#(\d+);/g, function (_, d) { return String.fromCharCode(Number(d)); });
+}
+Object.keys(I18N).forEach(function (code) {
+  Object.keys(I18N[code]).forEach(function (key) { I18N[code][key] = decodeNumericEntities(I18N[code][key]); });
+});
+
+let lang = 'en';
+function t(key, vars) {
+  const dict = I18N[lang] || I18N.en;
+  let s = (dict[key] !== undefined) ? dict[key] : (I18N.en[key] !== undefined ? I18N.en[key] : key);
+  if (vars) {
+    Object.keys(vars).forEach(function (k) { s = s.split('{' + k + '}').join(String(vars[k])); });
+  }
+  return s;
+}
+
+/* --------------------------------------------------------------- 2. state */
+const NS = 'http://www.w3.org/2000/svg';
+const STORE_KEY = 'treeviz.session.v1';
+const DOMAINS = ['general', 'debug', 'code', 'web'];
+const LEAF_STATUSES = ['verified', 'unverified', 'failed'];
+const RC_RESULTS = ['pass', 'fail', 'gap'];
+
+const state = {
+  model: null,                 // parsed tree-json
+  errors: [],                  // validation errors {path, rule, message, warn?}
+  statuses: Object.create(null),
+  health: null,
+  layout: null,
+  index: null,                 // id -> laid-out record
+  collapsed: new Set(),
+  selectedId: null,
+  editingId: null,
+  focusId: null,
+  zoom: 1, panX: 0, panY: 0,
+  dragMoved: false,
+  theme: 'auto',
+  playback: { active: false, phase: 'down', index: 0, playing: false, speed: 1, steps: [] },
+  timer: null
+};
+
+const els = {};
+function $(id) { return document.getElementById(id); }
+
+/* -------------------------------------------------------- 3. DOM helpers */
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+}
+function svgEl(tag, attrs) {
+  const n = document.createElementNS(NS, tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) { n.setAttribute(k, String(attrs[k])); });
+  return n;
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+/* ------------------------------------------------------------- 4. parsing */
+function extractTreeJson(text) {
+  const src = String(text == null ? '' : text);
+  const m = src.match(/```tree-json\s*([\s\S]*?)```/i);
+  return m ? m[1].trim() : src.trim();
+}
+function parseInput(text) {
+  const raw = extractTreeJson(text);
+  if (!raw) return { ok: false, model: null, errors: [{ path: '$', rule: 'empty', message: t('errEmpty') }] };
+  let model;
+  try {
+    model = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, model: null, errors: [{ path: '$', rule: 'json', message: t('errJson', { msg: e.message }) }] };
+  }
+  const errors = validateModel(model);
+  const hardErrors = errors.filter(function (e) { return !e.warn; });
+  return { ok: hardErrors.length === 0, model: model, errors: errors };
+}
+
+/* ---------------------------------------------------------- 5. validation */
+function validateModel(m) {
+  const errors = [];
+  function push(path, rule, message, warn) {
+    errors.push({ path: path, rule: rule, message: message, warn: !!warn });
+  }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) {
+    push('$', 'type', t('errNotObject'));
+    return errors;
+  }
+  if (m.version !== 1) push('version', 'const', t('errVersion'));
+  if (DOMAINS.indexOf(m.domain) === -1) push('domain', 'enum', t('errDomain'));
+  if (typeof m.title !== 'string' || !m.title.trim()) push('title', 'minLength', t('errTitle'));
+
+  const ids = Object.create(null);
+
+  function walkNode(node, path) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) {
+      push(path, 'type', t('errNodeType'));
+      return;
+    }
+    if (typeof node.id !== 'string' || !node.id.trim()) push(path + '.id', 'minLength', t('errId'));
+    else if (ids[node.id]) push(path + '.id', 'unique', t('errDuplicateId', { id: node.id }));
+    else ids[node.id] = true;
+
+    if (typeof node.text !== 'string' || !node.text.trim()) push(path + '.text', 'minLength', t('errText'));
+
+    const hasChildren = Object.prototype.hasOwnProperty.call(node, 'children');
+    if (!hasChildren) {
+      // leaf: evidence + status are mandatory
+      if (typeof node.evidence !== 'string' || !node.evidence.trim()) push(path, 'leafEvidence', t('errLeafEvidence'));
+      if (LEAF_STATUSES.indexOf(node.status) === -1) push(path, 'leafStatus', t('errLeafStatus'));
+    } else {
+      if (!Array.isArray(node.children)) {
+        push(path + '.children', 'type', t('errChildrenType'));
+      } else {
+        if (node.children.length < 1) push(path + '.children', 'minItems', t('errChildrenMin'));
+        if (node.children.length > 4) push(path + '.children', 'maxItems', t('errChildrenMax'));
+        node.children.forEach(function (c, i) { walkNode(c, path + '.children[' + i + ']'); });
+      }
+    }
+  }
+  walkNode(m.root, 'root');
+
+  if (!Array.isArray(m.reverse_check)) {
+    push('reverse_check', 'type', t('errRcType'));
+  } else {
+    m.reverse_check.forEach(function (rc, i) {
+      const p = 'reverse_check[' + i + ']';
+      if (!rc || typeof rc !== 'object') { push(p, 'type', t('errRcItem')); return; }
+      if (typeof rc.target !== 'string' || !rc.target.trim()) push(p + '.target', 'minLength', t('errRcTarget'));
+      else if (ids[rc.target] === undefined) push(p + '.target', 'ref', t('errRcUnknownTarget', { id: rc.target }));
+      if (typeof rc.question !== 'string' || !rc.question.trim()) push(p + '.question', 'minLength', t('errRcQuestion'));
+      if (RC_RESULTS.indexOf(rc.result) === -1) push(p + '.result', 'enum', t('errRcResult'));
+    });
+  }
+
+  if (typeof m.conclusion !== 'string') {
+    push('conclusion', 'type', t('errConclusion'));
+  } else if (m.conclusion.trim() && Array.isArray(m.reverse_check) &&
+             m.reverse_check.some(function (r) { return r && (r.result === 'fail' || r.result === 'gap'); })) {
+    push('conclusion', 'semantic', t('errConclusionEarly'), true);
+  }
+  return errors;
+}
+
+/* -------------------------------------------------------------- 6. status */
+function isLeaf(node) { return !(node.children && node.children.length); }
+
+function computeStatuses(model) {
+  const map = Object.create(null);
+  (function walk(node) {
+    if (isLeaf(node)) {
+      map[node.id] = node.status === 'verified' ? 'green' : (node.status === 'failed' ? 'red' : 'amber');
+      return map[node.id];
+    }
+    let anyRed = false, allGreen = true;
+    node.children.forEach(function (c) {
+      const s = walk(c);
+      if (s === 'red') anyRed = true;
+      if (s !== 'green') allGreen = false;
+    });
+    map[node.id] = anyRed ? 'red' : (allGreen ? 'green' : 'amber');
+    return map[node.id];
+  })(model.root);
+  return map;
+}
+
+function collectLeaves(model) {
+  const out = [];
+  (function walk(node, depth, parentId) {
+    if (isLeaf(node)) { out.push({ node: node, depth: depth, parentId: parentId }); return; }
+    node.children.forEach(function (c) { walk(c, depth + 1, node.id); });
+  })(model.root, 0, null);
+  return out;
+}
+function maxDepth(model) {
+  let d = 0;
+  (function walk(node, depth) {
+    if (depth > d) d = depth;
+    if (isLeaf(node)) return;
+    node.children.forEach(function (c) { walk(c, depth + 1); });
+  })(model.root, 0);
+  return d;
+}
+
+function computeHealth(model, statuses) {
+  const leaves = collectLeaves(model);
+  const counts = { verified: 0, unverified: 0, failed: 0 };
+  leaves.forEach(function (l) {
+    const s = l.node.status;
+    if (s === 'verified') counts.verified++;
+    else if (s === 'failed') counts.failed++;
+    else counts.unverified++;
+  });
+  const rcs = Array.isArray(model.reverse_check) ? model.reverse_check : [];
+  const fail = rcs.filter(function (r) { return r.result === 'fail'; }).length;
+  const gap = rcs.filter(function (r) { return r.result === 'gap'; }).length;
+
+  const blocking = [];
+  const seen = Object.create(null);
+  leaves.forEach(function (l) {
+    if (l.node.status !== 'verified' && !seen[l.node.id]) {
+      seen[l.node.id] = true;
+      blocking.push({ id: l.node.id, reason: t('blockLeaf', { status: l.node.status }) });
+    }
+  });
+  rcs.forEach(function (r) {
+    if ((r.result === 'fail' || r.result === 'gap') && !seen[r.target]) {
+      seen[r.target] = true;
+      blocking.push({ id: r.target, reason: t('blockRc', { result: r.result }) });
+    }
+  });
+  const ready = leaves.length > 0 && counts.verified === leaves.length && fail === 0 && gap === 0;
+  return { counts: counts, leafTotal: leaves.length, fail: fail, gap: gap, blocking: blocking, ready: ready, rcs: rcs };
+}
+
+/* -------------------------------------------------------------- 7. layout */
+const NODE_W = 208, NODE_MIN_H = 46, LEVEL_H = 132, SIB_GAP = 26, PAD = 40;
+const CHAR_W = 6.4, MAX_CHARS = 30, MAX_LINES = 6;
+
+function wrapText(text, maxChars) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  words.forEach(function (w) {
+    const candidate = line ? line + ' ' + w : w;
+    if (candidate.length <= maxChars) { line = candidate; return; }
+    if (line) lines.push(line);
+    if (w.length > maxChars) {
+      // hard-break very long tokens (ids, urls)
+      let rest = w;
+      while (rest.length > maxChars) {
+        lines.push(rest.slice(0, maxChars - 1) + '-');
+        rest = rest.slice(maxChars - 1);
+      }
+      line = rest;
+    } else {
+      line = w;
+    }
+  });
+  if (line) lines.push(line);
+  if (!lines.length) lines.push('');
+  if (lines.length > MAX_LINES) {
+    lines.length = MAX_LINES;
+    lines[MAX_LINES - 1] = lines[MAX_LINES - 1].slice(0, maxChars - 1) + '\u2026';
+  }
+  return lines;
+}
+
+function visibleChildren(node) {
+  if (!node.children || !node.children.length) return [];
+  if (state.collapsed.has(node.id)) return [];
+  return node.children;
+}
+
+function computeLayout(model) {
+  const widths = Object.create(null);
+  const nodes = [], edges = [];
+
+  (function measure(node) {
+    const kids = visibleChildren(node);
+    if (!kids.length) { widths[node.id] = NODE_W; return NODE_W; }
+    let w = 0;
+    kids.forEach(function (k, i) { w += measure(k); if (i) w += SIB_GAP; });
+    w = Math.max(NODE_W, w);
+    widths[node.id] = w;
+    return w;
+  })(model.root);
+
+  (function place(node, left, depth, parentId) {
+    const w = widths[node.id];
+    const lines = wrapText(node.text, MAX_CHARS);
+    const h = Math.max(NODE_MIN_H, 16 + lines.length * 15);
+    const y = PAD + depth * LEVEL_H;
+    const kids = visibleChildren(node);
+    const placedKids = [];
+    let x;
+    if (!kids.length) {
+      x = left + (w - NODE_W) / 2;
+    } else {
+      let cx = left;
+      const centers = [];
+      kids.forEach(function (k, i) {
+        const kw = widths[k.id];
+        const rec = place(k, cx, depth + 1, node.id);
+        centers.push(rec.cx);
+        placedKids.push(rec);
+        cx += kw + SIB_GAP;
+      });
+      x = (centers[0] + centers[centers.length - 1]) / 2 - NODE_W / 2;
+    }
+    const rec = {
+      id: node.id, node: node, x: x, y: y, w: NODE_W, h: h, depth: depth,
+      lines: lines, hasChildren: !!(node.children && node.children.length),
+      collapsed: state.collapsed.has(node.id), parentId: parentId,
+      cx: x + NODE_W / 2, bottom: y + h
+    };
+    nodes.push(rec);
+    placedKids.forEach(function (k) {
+      edges.push({ x1: rec.cx, y1: rec.bottom, x2: k.cx, y2: k.y, parentId: node.id, childId: k.id });
+    });
+    return rec;
+  })(model.root, PAD, 0, null);
+
+  const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  nodes.forEach(function (n) {
+    bounds.minX = Math.min(bounds.minX, n.x);
+    bounds.minY = Math.min(bounds.minY, n.y);
+    bounds.maxX = Math.max(bounds.maxX, n.x + n.w);
+    bounds.maxY = Math.max(bounds.maxY, n.y + n.h);
+  });
+  if (!nodes.length) { bounds.minX = 0; bounds.minY = 0; bounds.maxX = 1; bounds.maxY = 1; }
+
+  const index = Object.create(null);
+  nodes.forEach(function (n) { index[n.id] = n; });
+  return { nodes: nodes, edges: edges, bounds: bounds, index: index };
+}
+
+/* --------------------------------------------------------- 8. tree render */
+function manageLayout() {
+  if (!state.model) { state.layout = null; state.index = null; return; }
+  state.layout = computeLayout(state.model);
+  state.index = state.layout.index;
+}
+
+function statusIcon(status) {
+  if (status === 'green') return '\u2713';
+  if (status === 'amber') return '?';
+  if (status === 'red') return '\u2717';
+  return '\u25CB';
+}
+
+function applyTransform() {
+  if (!els.viewport) return;
+  els.viewport.setAttribute('transform', 'translate(' + state.panX + ' ' + state.panY + ') scale(' + state.zoom + ')');
+  els.zoomBadge.textContent = Math.round(state.zoom * 100) + '%';
+}
+
+function renderTree() {
+  const svg = els.svg;
+  clear(svg);
+  if (!state.layout) { els.empty.hidden = false; els.viewport = null; return; }
+  els.empty.hidden = true;
+
+  const viewport = svgEl('g', { id: 'viewport' });
+  const edgesG = svgEl('g', { class: 'edges' });
+  const nodesG = svgEl('g', { class: 'nodes' });
+
+  state.layout.edges.forEach(function (e) { edgesG.appendChild(edgeEl(e)); });
+  state.layout.nodes.forEach(function (rec) { nodesG.appendChild(nodeEl(rec)); });
+
+  viewport.appendChild(edgesG);
+  viewport.appendChild(nodesG);
+  svg.appendChild(viewport);
+  els.viewport = viewport;
+  applyTransform();
+  applyPlaybackStyles();
+}
+
+function edgeEl(e) {
+  const dy = Math.max(18, (e.y2 - e.y1) * 0.5);
+  const d = 'M ' + e.x1 + ' ' + e.y1 + ' C ' + e.x1 + ' ' + (e.y1 + dy) + ' ' + e.x2 + ' ' + (e.y2 - dy) + ' ' + e.x2 + ' ' + e.y2;
+  const p = svgEl('path', { class: 'edge', d: d, 'data-child': e.childId });
+  return p;
+}
+
+function nodeEl(rec) {
+  const status = state.statuses[rec.id] || 'amber';
+  const g = svgEl('g', {
+    class: 'node status-' + status + (state.selectedId === rec.id ? ' selected' : ''),
+    'data-id': rec.id,
+    role: 'treeitem',
+    tabindex: '-1',
+    'aria-level': String(rec.depth + 1),
+    'aria-label': rec.node.text + ' (' + status + ')'
+  });
+  if (rec.hasChildren) g.setAttribute('aria-expanded', String(!rec.collapsed));
+
+  g.appendChild(svgEl('rect', { class: 'card', x: rec.x, y: rec.y, width: rec.w, height: rec.h, rx: 10 }));
+
+  const icon = svgEl('text', { class: 'icon', x: rec.x + 10, y: rec.y + 20 });
+  icon.textContent = statusIcon(status);
+  g.appendChild(icon);
+
+  rec.lines.forEach(function (line, i) {
+    const tx = svgEl('text', { class: 'label', x: rec.x + 28, y: rec.y + 20 + i * 15 });
+    tx.textContent = line;
+    g.appendChild(tx);
+  });
+
+  if (rec.hasChildren) {
+    const chev = svgEl('text', { class: 'toggle', x: rec.x + rec.w - 16, y: rec.y + 20, 'aria-hidden': 'true' });
+    chev.textContent = rec.collapsed ? '\u25B8' : '\u25BE';
+    chev.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      toggleCollapse(rec.id);
+    });
+    g.appendChild(chev);
+  }
+
+  g.addEventListener('click', function (ev) {
+    if (state.dragMoved) return;
+    ev.stopPropagation();
+    selectNode(rec.id, true);
+  });
+  g.addEventListener('dblclick', function (ev) {
+    ev.stopPropagation();
+    selectNode(rec.id, false);
+    state.editingId = rec.id;
+    renderDetails();
+  });
+  return g;
+}
+
+function toggleCollapse(id) {
+  if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+  manageLayout();
+  renderTree();
+  saveSession();
+}
+
+/* ------------------------------------------------------- 9. status visuals */
+function applyPlaybackStyles() {
+  if (!state.layout) return;
+  const pb = state.playback;
+  const nodesG = els.svg.querySelector('.nodes');
+  const edgesG = els.svg.querySelector('.edges');
+  if (!nodesG) return;
+
+  // visible ids: during DOWN playback only the revealed prefix is shown
+  let visible = null, fromDepth = null;
+  if (pb.active) {
+    if (pb.phase === 'down') {
+      visible = Object.create(null);
+      const downSteps = pb.steps.filter(function (s) { return s.phase === 'down'; });
+      downSteps.slice(0, pb.index).forEach(function (s) { visible[s.id] = true; });
+    } else {
+      const downCount = pb.steps.filter(function (s) { return s.phase === 'down'; }).length;
+      const upDone = pb.steps.slice(downCount, pb.index);
+      const depths = upDone.filter(function (s) { return s.kind === 'propagate'; }).map(function (s) { return s.depth; });
+      fromDepth = depths.length ? Math.min.apply(null, depths) : null;  // null = do not reveal statuses yet
+    }
+  }
+
+  Array.prototype.forEach.call(nodesG.children, function (g) {
+    const id = g.getAttribute('data-id');
+    const rec = state.index[id];
+    if (!rec) return;
+    let status = state.statuses[id];
+    if (visible && !visible[id]) { g.style.display = 'none'; return; }
+    g.style.display = '';
+    if (fromDepth === null && pb.active) status = 'none';
+    else if (fromDepth !== null && rec.depth < fromDepth) status = 'none';
+    else if (fromDepth === null && !pb.active) status = state.statuses[id];
+
+    g.className.baseVal = 'node status-' + status +
+      (state.selectedId === id ? ' selected' : '') +
+      (pb.flashId === id ? ' highlight' : '');
+  });
+
+  if (edgesG) {
+    Array.prototype.forEach.call(edgesG.children, function (p) {
+      const childId = p.getAttribute('data-child');
+      const rec = state.index[childId];
+      if (!rec) return;
+      const hidden = visible && !visible[childId];
+      p.style.display = hidden ? 'none' : '';
+      p.className.baseVal = 'edge' + (pb.flashId === rec.parentId ? ' up' : '');
+    });
+  }
+}
+
+/* ------------------------------------------------------ 10. panels/health */
+function renderErrors() {
+  clear(els.errors);
+  state.errors.forEach(function (e) {
+    const li = el('li', e.warn ? 'warn' : null);
+    const where = el('code', null, e.path || '$');
+    li.appendChild(where);
+    li.appendChild(document.createTextNode(' \u2014 ' + e.message + ' [' + e.rule + ']'));
+    els.errors.appendChild(li);
+  });
+}
+
+function renderHealth() {
+  const h = state.health;
+  if (!h) {
+    els.verdict.textContent = '-';
+    els.verdict.className = 'verdict';
+    els.countVerified.textContent = els.countUnverified.textContent = els.countFailed.textContent = '0';
+    els.countRc.textContent = '0';
+    clear(els.blocking);
+    return;
+  }
+  els.countVerified.textContent = String(h.counts.verified);
+  els.countUnverified.textContent = String(h.counts.unverified);
+  els.countFailed.textContent = String(h.counts.failed);
+  els.countRc.textContent = String(h.fail + h.gap);
+  const hardErrors = state.errors.filter(function (e) { return !e.warn; }).length;
+  els.verdict.textContent = (h.ready && !hardErrors) ? t('verdictReady') : t('verdictNotReady');
+  els.verdict.className = 'verdict ' + ((h.ready && !hardErrors) ? 'ready' : 'notready');
+
+  clear(els.blocking);
+  if (h.blocking.length || hardErrors) {
+    const label = el('li', null);
+    label.appendChild(el('strong', null, t('blockingTitle')));
+    els.blocking.appendChild(label);
+    if (hardErrors) {
+      const li = el('li');
+      const btn = el('button', null, t('blockInvalid', { n: hardErrors }));
+      btn.addEventListener('click', function () { els.input.focus(); });
+      li.appendChild(btn);
+      els.blocking.appendChild(li);
+    }
+    h.blocking.forEach(function (b) {
+      const li = el('li');
+      const btn = el('button', null, b.id + ' \u00B7 ' + b.reason);
+      btn.addEventListener('click', function () { jumpToNode(b.id); });
+      li.appendChild(btn);
+      els.blocking.appendChild(li);
+    });
+  }
+}
+
+function revealPath(targetId) {
+  const chain = [];
+  (function find(node, path) {
+    if (node.id === targetId) { chain.push.apply(chain, path); return true; }
+    if (!node.children) return false;
+    return node.children.some(function (c) { return find(c, path.concat([node.id])); });
+  })(state.model.root, []);
+  chain.forEach(function (id) { state.collapsed.delete(id); });
+}
+
+function jumpToNode(id) {
+  if (!state.index || !state.index[id]) return;
+  if (state.model) {
+    revealPath(id);
+    manageLayout();
+    renderTree();
+  }
+  selectNode(id, false);
+  const rec = state.index[id];
+  if (rec) centerOn(rec);
+}
+
+function renderDetails() {
+  const body = els.detailsBody;
+  clear(body);
+  const id = state.selectedId;
+  if (!id || !state.index || !state.index[id]) {
+    body.appendChild(el('p', 'hint', t('noSelection')));
+    return;
+  }
+  const rec = state.index[id];
+  const node = rec.node;
+  const editing = state.editingId === id;
+  const status = state.statuses[id];
+
+  const head = el('div', 'row');
+  head.appendChild(el('span', 'pill ' + (status === 'green' ? 'g' : status === 'red' ? 'r' : 'a'),
+    statusIcon(status) + ' ' + (isLeaf(node) ? node.status : 'computed')));
+  head.appendChild(el('span', 'meta', id + (rec.parentId ? ' \u2190 ' + rec.parentId : ' (' + t('rootLabel') + ')')));
+  body.appendChild(head);
+
+  if (editing) {
+    body.appendChild(field('edit-text', t('text'), node.text, true));
+    if (isLeaf(node)) {
+      body.appendChild(field('edit-evidence', t('evidence'), node.evidence || '', true));
+      const wrap = el('div', 'field');
+      wrap.appendChild(el('label', null, t('status')));
+      const sel = el('select');
+      LEAF_STATUSES.forEach(function (s) {
+        const o = el('option', null, s);
+        o.value = s;
+        if (node.status === s) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.id = 'edit-status';
+      wrap.appendChild(sel);
+      body.appendChild(wrap);
+    }
+  } else {
+    const tw = el('div', 'field');
+    tw.appendChild(el('label', null, t('text')));
+    tw.appendChild(el('p', null, node.text));
+    body.appendChild(tw);
+    if (isLeaf(node)) {
+      const ew = el('div', 'field');
+      ew.appendChild(el('label', null, t('evidence')));
+      ew.appendChild(el('p', null, node.evidence || ''));
+      body.appendChild(ew);
+    }
+  }
+
+  const actions = el('div', 'row');
+  if (editing) {
+    const save = el('button', 'primary', t('save'));
+    save.addEventListener('click', applyEdit);
+    const cancel = el('button', null, t('cancel'));
+    cancel.addEventListener('click', function () { state.editingId = null; renderDetails(); });
+    actions.appendChild(save);
+    actions.appendChild(cancel);
+  } else {
+    const edit = el('button', null, t('edit'));
+    edit.addEventListener('click', function () { state.editingId = id; renderDetails(); });
+    actions.appendChild(edit);
+    const add = el('button', null, t('addChild'));
+    add.disabled = (node.children ? node.children.length : 0) >= 4;
+    add.addEventListener('click', function () { addChild(id); });
+    actions.appendChild(add);
+    const del = el('button', null, t('deleteNode'));
+    del.disabled = (rec.parentId === null);
+    del.addEventListener('click', function () { deleteNode(id); });
+    actions.appendChild(del);
+  }
+  body.appendChild(actions);
+
+  // reverse_check entries targeting this node
+  const rcs = state.health ? state.health.rcs.filter(function (r) { return r.target === id; }) : [];
+  const rcWrap = el('div', 'field');
+  rcWrap.appendChild(el('label', null, t('reverseChecks')));
+  if (!rcs.length) {
+    rcWrap.appendChild(el('p', 'hint', t('none')));
+  } else {
+    const ul = el('ul', 'rc-list');
+    rcs.forEach(function (r) {
+      const li = el('li');
+      const res = el('span', 'res ' + r.result, r.result.toUpperCase());
+      li.appendChild(res);
+      li.appendChild(document.createTextNode(' ' + r.question));
+      if (r.note) li.appendChild(el('div', 'hint', r.note));
+      ul.appendChild(li);
+    });
+    rcWrap.appendChild(ul);
+  }
+  body.appendChild(rcWrap);
+}
+
+function field(id, label, value, multiline) {
+  const wrap = el('div', 'field');
+  const lab = el('label', null, label);
+  lab.setAttribute('for', id);
+  wrap.appendChild(lab);
+  const input = multiline ? el('textarea') : el('input');
+  if (!multiline) input.type = 'text';
+  else input.rows = 3;
+  input.id = id;
+  input.value = value;
+  wrap.appendChild(input);
+  return wrap;
+}
+
+/* ------------------------------------------------------------ 11. editing */
+function uniqueId(base) {
+  const ids = Object.create(null);
+  (function walk(n) { ids[n.id] = true; if (n.children) n.children.forEach(walk); })(state.model.root);
+  let i = 1, candidate = base + '-n' + i;
+  while (ids[candidate]) { i++; candidate = base + '-n' + i; }
+  return candidate;
+}
+
+function applyEdit() {
+  const id = state.editingId;
+  const rec = state.index[id];
+  if (!rec) return;
+  const textEl = $('edit-text');
+  const evEl = $('edit-evidence');
+  const stEl = $('edit-status');
+  if (textEl && textEl.value.trim()) rec.node.text = textEl.value.trim();
+  if (evEl) rec.node.evidence = evEl.value;
+  if (stEl) rec.node.status = stEl.value;
+  state.editingId = null;
+  refreshAll();
+}
+
+function addChild(id) {
+  const rec = state.index[id];
+  if (!rec) return;
+  const node = rec.node;
+  if (!node.children) node.children = [];
+  if (node.children.length >= 4) return;
+  node.children.push({
+    id: uniqueId(id),
+    text: t('newNodeText'),
+    evidence: t('newEvidence'),
+    status: 'unverified'
+  });
+  state.collapsed.delete(id);
+  refreshAll();
+}
+
+function deleteNode(id) {
+  const rec = state.index[id];
+  if (!rec || rec.parentId === null) return;
+  const removed = Object.create(null);
+  (function collect(n) { removed[n.id] = true; if (n.children) n.children.forEach(collect); })(rec.node);
+
+  (function walk(node) {
+    if (!node.children) return;
+    node.children = node.children.filter(function (c) { return c.id !== id; });
+    if (!node.children.length) delete node.children;
+    node.children && node.children.forEach(walk);
+  })(state.model.root);
+
+  state.model.reverse_check = (state.model.reverse_check || []).filter(function (r) { return !removed[r.target]; });
+  state.selectedId = null;
+  if (state.editingId && removed[state.editingId]) state.editingId = null;
+  refreshAll();
+}
+
+/* ----------------------------------------------------------- 12. playback */
+function buildSteps(model) {
+  const steps = [];
+  const order = [];
+  (function walk(n) { order.push(n.id); if (n.children) n.children.forEach(walk); })(model.root);
+  order.forEach(function (id) { steps.push({ phase: 'down', kind: 'node', id: id }); });
+  const rcs = Array.isArray(model.reverse_check) ? model.reverse_check : [];
+  rcs.forEach(function (rc, i) { steps.push({ phase: 'up', kind: 'rc', index: i, target: rc.target, result: rc.result }); });
+  const deepest = maxDepth(model);
+  for (let d = deepest; d >= 0; d--) steps.push({ phase: 'up', kind: 'propagate', depth: d });
+  steps.push({ phase: 'up', kind: 'verdict' });
+  return steps;
+}
+
+function startPlayback(phase) {
+  if (!state.model) return;
+  const pb = state.playback;
+  pb.steps = buildSteps(state.model);
+  pb.active = true;
+  pb.phase = phase;
+  if (phase === 'down') pb.index = 0;
+  else pb.index = pb.steps.filter(function (s) { return s.phase === 'down'; }).length;
+  pb.flashId = null;
+  updatePlaybackUI();
+  applyPlaybackStyles();
+  play();
+}
+
+function stopPlayback() {
+  const pb = state.playback;
+  pb.playing = false;
+  clearTimeout(state.timer);
+  state.timer = null;
+  updatePlaybackUI();
+}
+
+function showAll() {
+  const pb = state.playback;
+  stopPlayback();
+  pb.active = false;
+  pb.index = pb.steps.length;
+  pb.flashId = null;
+  updatePlaybackUI();
+  applyPlaybackStyles();
+}
+
+function stepBy(delta) {
+  const pb = state.playback;
+  if (!pb.active) { startPlayback('down'); return; }
+  pb.index = clamp(pb.index + delta, 0, pb.steps.length);
+  const cur = pb.index > 0 ? pb.steps[pb.index - 1] : null;
+  pb.flashId = (cur && cur.kind === 'rc') ? cur.target : null;
+  updatePlaybackUI();
+  applyPlaybackStyles();
+}
+
+function play() {
+  const pb = state.playback;
+  if (!pb.active) return;
+  pb.playing = true;
+  updatePlaybackUI();
+  schedule();
+}
+function pause() { stopPlayback(); }
+
+function schedule() {
+  const pb = state.playback;
+  clearTimeout(state.timer);
+  if (!pb.playing) return;
+  const delay = clamp(1000 / (pb.speed || 1), 60, 4000);
+  state.timer = setTimeout(function () {
+    if (!pb.playing) return;
+    if (pb.index >= pb.steps.length) { pb.playing = false; updatePlaybackUI(); return; }
+    pb.index += 1;
+    const cur = pb.steps[pb.index - 1];
+    pb.flashId = (cur && cur.kind === 'rc') ? cur.target : null;
+    updatePlaybackUI();
+    applyPlaybackStyles();
+    schedule();
+  }, delay);
+}
+
+function updatePlaybackUI() {
+  const pb = state.playback;
+  els.btnPlay.textContent = pb.playing ? t('pause') : t('play');
+  let label;
+  if (!pb.active) label = t('playbackAll');
+  else if (pb.index >= pb.steps.length) label = t('verdictReady');
+  else {
+    label = t('playbackStep', { i: pb.index, n: pb.steps.length });
+    const next = pb.steps[pb.index];
+    if (next && next.kind === 'rc') {
+      const rc = (state.health ? state.health.rcs : [])[next.index];
+      if (rc) label += ' \u00B7 ' + next.target + ' ' + rc.result.toUpperCase();
+    }
+  }
+  els.playStatus.textContent = label;
+}
+
+/* ---------------------------------------------------------- 13. zoom/pan */
+function centerOn(rec) {
+  const rect = els.svg.getBoundingClientRect();
+  state.panX = rect.width / 2 - (rec.x + rec.w / 2) * state.zoom;
+  state.panY = rect.height / 3 - (rec.y + rec.h / 2) * state.zoom;
+  applyTransform();
+}
+
+function fitToScreen() {
+  if (!state.layout) return;
+  const rect = els.svg.getBoundingClientRect();
+  const b = state.layout.bounds;
+  const w = Math.max(1, b.maxX - b.minX + 2 * PAD);
+  const h = Math.max(1, b.maxY - b.minY + 2 * PAD);
+  const scale = clamp(Math.min(rect.width / w, rect.height / h), 0.08, 1.6);
+  state.zoom = scale;
+  state.panX = (rect.width - w * scale) / 2 - (b.minX - PAD) * scale;
+  state.panY = (rect.height - h * scale) / 2 - (b.minY - PAD) * scale;
+  applyTransform();
+}
+
+function zoomAt(clientX, clientY, factor) {
+  const rect = els.svg.getBoundingClientRect();
+  const px = clientX - rect.left, py = clientY - rect.top;
+  const next = clamp(state.zoom * factor, 0.08, 4);
+  const k = next / state.zoom;
+  state.panX = px - k * (px - state.panX);
+  state.panY = py - k * (py - state.panY);
+  state.zoom = next;
+  applyTransform();
+}
+
+/* ------------------------------------------------------------ 14. export */
+const EXPORT_CSS = [
+  '.card{fill:#fff;stroke:#d6dbe1;stroke-width:1.5}',
+  '.label{fill:#14181d;font:12.5px system-ui,Arial}',
+  '.icon{font:700 13px system-ui,Arial}',
+  '.toggle{fill:#5b6572;font:13px system-ui,Arial}',
+  '.edge{fill:none;stroke:#d6dbe1;stroke-width:1.5}',
+  '.node.status-green .card{fill:#e6f4ec;stroke:#1b7f4b;stroke-width:2}',
+  '.node.status-green .icon{fill:#1b7f4b}',
+  '.node.status-amber .card{fill:#fdf3dd;stroke:#a86a00;stroke-width:2;stroke-dasharray:6 4}',
+  '.node.status-amber .icon{fill:#a86a00}',
+  '.node.status-red .card{fill:#fdeceb;stroke:#b3261e;stroke-width:2;stroke-dasharray:3 3}',
+  '.node.status-red .icon{fill:#b3261e}',
+  '.node.status-none .card{fill:#eceff3;stroke:#d6dbe1;stroke-dasharray:2 5}',
+  '.node.status-none .icon{fill:#5b6572}'
+].join('\n');
+
+function serializeForExport() {
+  const clone = els.svg.cloneNode(true);
+  const b = state.layout.bounds;
+  const w = b.maxX - b.minX + 2 * PAD, h = b.maxY - b.minY + 2 * PAD;
+  clone.setAttribute('xmlns', NS);
+  clone.setAttribute('viewBox', (b.minX - PAD) + ' ' + (b.minY - PAD) + ' ' + w + ' ' + h);
+  clone.setAttribute('width', String(Math.min(w, 2400)));
+  clone.setAttribute('height', String(Math.min(h, 2400)));
+  const vp = clone.querySelector('#viewport');
+  if (vp) vp.removeAttribute('transform');
+  const style = svgEl('style', {});
+  style.textContent = EXPORT_CSS;
+  clone.insertBefore(style, clone.firstChild);
+  return new XMLSerializer().serializeToString(clone);
+}
+
+function download(name, mime, content) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = el('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 500);
+}
+
+/* ----------------------------------------------------------- 15. storage */
+function storageAvailable() {
+  try {
+    const k = '__treeviz_probe__';
+    localStorage.setItem(k, '1');
+    localStorage.removeItem(k);
+    return true;
+  } catch (e) { return false; }
+}
+function saveSession() {
+  if (!storageAvailable()) return;
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      json: state.model ? JSON.stringify(state.model) : '',
+      lang: lang,
+      theme: state.theme,
+      collapsed: Array.from(state.collapsed)
+    }));
+  } catch (e) { /* quota or privacy mode: ignore */ }
+}
+function loadSession() {
+  if (!storageAvailable()) return null;
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+/* -------------------------------------------------- 16. orchestration */
+function refreshAll() {
+  const errors = state.model ? validateModel(state.model) : [];
+  state.errors = errors;
+  state.statuses = state.model ? computeStatuses(state.model) : Object.create(null);
+  state.health = state.model ? computeHealth(state.model, state.statuses) : null;
+  if (state.model) {
+    const ids = Object.create(null);
+    (function walk(n) { ids[n.id] = true; if (n.children) n.children.forEach(walk); })(state.model.root);
+    Array.from(state.collapsed).forEach(function (id) { if (!ids[id]) state.collapsed.delete(id); });
+    if (state.selectedId && !ids[state.selectedId]) state.selectedId = null;
+  }
+  manageLayout();
+  renderTree();
+  renderErrors();
+  renderHealth();
+  renderDetails();
+  els.input.value = state.model ? JSON.stringify(state.model, null, 2) : els.input.value;
+  updatePlaybackUI();
+  saveSession();
+}
+
+function renderFromText(text) {
+  const res = parseInput(text);
+  if (res.model) {
+    state.model = res.model;
+    stopPlayback();
+    state.playback.steps = [];
+    state.playback.active = false;
+    state.selectedId = null;
+    state.editingId = null;
+    refreshAll();
+    if (state.layout) fitToScreen();
+  } else {
+    state.model = null;
+    state.errors = res.errors;
+    state.health = null;
+    state.statuses = Object.create(null);
+    state.layout = null;
+    state.index = null;
+    renderTree();
+    renderErrors();
+    renderHealth();
+    renderDetails();
+  }
+  return res;
+}
+
+function selectNode(id, focus) {
+  state.selectedId = id;
+  state.focusId = id;
+  renderTree();
+  renderDetails();
+  if (focus && state.index && state.index[id]) {
+    const g = els.svg.querySelector('.node[data-id="' + cssEscape(id) + '"]');
+    if (g) g.focus({ preventScroll: true });
+  }
+}
+
+function cssEscape(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+
+function neighbors(id) {
+  // returns {parent, children, prev, next} for keyboard navigation
+  const rec = state.index ? state.index[id] : null;
+  if (!rec) return null;
+  const parent = rec.parentId && state.index[rec.parentId] ? state.index[rec.parentId] : null;
+  const siblings = parent ? visibleChildren(parent.node) : [state.model.root];
+  const idx = siblings.findIndex(function (n) { return n.id === id; });
+  return {
+    parent: parent ? parent.id : null,
+    children: visibleChildren(rec.node).map(function (n) { return n.id; }),
+    prev: idx > 0 ? siblings[idx - 1].id : null,
+    next: idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1].id : null
+  };
+}
+
+/* ------------------------------------------------------------ 17. events */
+function wireEvents() {
+  els.btnRender.addEventListener('click', function () { renderFromText(els.input.value); });
+
+  els.input.addEventListener('input', debounce(function () { saveSession(); }, 600));
+
+  els.example.addEventListener('change', function () {
+    const key = els.example.value;
+    if (!key || !window.TREE_EXAMPLES || !window.TREE_EXAMPLES[key]) return;
+    els.input.value = JSON.stringify(window.TREE_EXAMPLES[key], null, 2);
+    renderFromText(els.input.value);
+  });
+
+  els.btnUpload.addEventListener('click', function () { els.file.click(); });
+  els.file.addEventListener('change', function () {
+    const f = els.file.files && els.file.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () { els.input.value = String(reader.result); renderFromText(els.input.value); };
+    reader.onerror = function () { els.errors = [{ path: '$', rule: 'file', message: 'Could not read the file.' }]; renderErrors(); };
+    reader.readAsText(f);
+  });
+
+  // playback
+  els.btnDown.addEventListener('click', function () { startPlayback('down'); });
+  els.btnUp.addEventListener('click', function () { startPlayback('up'); });
+  els.btnShowAll.addEventListener('click', showAll);
+  els.btnPlay.addEventListener('click', function () {
+    if (state.playback.playing) pause(); else play();
+  });
+  els.btnStepBack.addEventListener('click', function () { stepBy(-1); });
+  els.btnStepFwd.addEventListener('click', function () { stepBy(1); });
+  els.speed.addEventListener('input', function () {
+    state.playback.speed = Number(els.speed.value) || 1;
+    if (state.playback.playing) schedule();
+  });
+
+  // zoom
+  els.btnZoomIn.addEventListener('click', function () {
+    const r = els.svg.getBoundingClientRect();
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2);
+  });
+  els.btnZoomOut.addEventListener('click', function () {
+    const r = els.svg.getBoundingClientRect();
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
+  });
+  els.btnFit.addEventListener('click', fitToScreen);
+
+  // edit / export
+  els.btnExpand.addEventListener('click', function () {
+    state.collapsed.clear();
+    refreshAll();
+  });
+  els.btnCopy.addEventListener('click', function () {
+    const text = state.model ? JSON.stringify(state.model, null, 2) : els.input.value;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flash(els.btnCopy, t('copied')); },
+        function () { flash(els.btnCopy, t('copyFailed')); });
+    } else {
+      flash(els.btnCopy, t('copyFailed'));
+    }
+  });
+  els.btnDownload.addEventListener('click', function () {
+    if (!state.model) return;
+    download('tree.json', 'application/json', JSON.stringify(state.model, null, 2));
+  });
+  els.btnSvg.addEventListener('click', function () {
+    if (!state.layout) return;
+    download('tree.svg', 'image/svg+xml', serializeForExport());
+  });
+  els.btnPng.addEventListener('click', function () {
+    if (!state.layout) return;
+    const svgStr = serializeForExport();
+    const img = new Image();
+    img.onload = function () {
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, img.width * scale);
+      canvas.height = Math.max(1, img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = el('a');
+        a.href = url;
+        a.download = 'tree.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 500);
+      }, 'image/png');
+    };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+  });
+
+  // theme + language
+  els.theme.addEventListener('change', function () {
+    setTheme(els.theme.value);
+    saveSession();
+  });
+  els.lang.addEventListener('change', function () {
+    setLang(els.lang.value);
+    saveSession();
+  });
+
+  // pointer interactions on the tree
+  const svg = els.svg;
+  const pointers = new Map();
+  let pinchStart = null;
+
+  svg.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+
+  svg.addEventListener('pointerdown', function (e) {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const pts = Array.from(pointers.values());
+      pinchStart = { d: distance(pts[0], pts[1]), zoom: state.zoom,
+                     cx: (pts[0].x + pts[1].x) / 2, cy: (pts[0].y + pts[1].y) / 2 };
+    }
+    state.dragMoved = false;
+    svg.setPointerCapture && svg.setPointerCapture(e.pointerId);
+  });
+
+  svg.addEventListener('pointermove', function (e) {
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2 && pinchStart) {
+      const pts = Array.from(pointers.values());
+      const d = distance(pts[0], pts[1]);
+      zoomAt(pinchStart.cx, pinchStart.cy, d / Math.max(1, pinchStart.d));
+      pinchStart.d = d;
+      state.dragMoved = true;
+      return;
+    }
+    const dx = e.clientX - prev.x, dy = e.clientY - prev.y;
+    if (Math.abs(dx) + Math.abs(dy) > 1) state.dragMoved = true;
+    if (state.dragMoved) {
+      state.panX += dx;
+      state.panY += dy;
+      applyTransform();
+    }
+  });
+
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = null;
+    setTimeout(function () { state.dragMoved = false; }, 0);
+  }
+  svg.addEventListener('pointerup', endPointer);
+  svg.addEventListener('pointercancel', endPointer);
+  svg.addEventListener('pointerleave', endPointer);
+
+  // background click clears selection
+  svg.addEventListener('click', function (e) {
+    if (state.dragMoved) return;
+    if (e.target && e.target.classList && e.target.classList.contains('card')) return;
+    if (e.target && e.target.closest && e.target.closest('.node')) return;
+    state.selectedId = null;
+    renderTree();
+    renderDetails();
+  });
+
+  // keyboard navigation
+  svg.addEventListener('keydown', function (e) {
+    if (!state.layout) return;
+    const cur = state.focusId || (state.model ? state.model.root.id : null);
+    const nb = cur ? neighbors(cur) : null;
+    let next = null;
+    if (e.key === 'ArrowDown' && nb && nb.children.length) next = nb.children[0];
+    else if (e.key === 'ArrowUp' && nb && nb.parent) next = nb.parent;
+    else if (e.key === 'ArrowRight' && nb && nb.next) next = nb.next;
+    else if (e.key === 'ArrowLeft' && nb && nb.prev) next = nb.prev;
+    else if (e.key === 'Enter' && cur) {
+      state.selectedId = cur;
+      renderTree();
+      renderDetails();
+      els.detailsBody.querySelector('button, textarea, input, select') && els.detailsBody.querySelector('button, textarea, input, select').focus();
+      e.preventDefault();
+      return;
+    } else if (e.key === ' ' && cur) {
+      toggleCollapse(cur);
+      e.preventDefault();
+      return;
+    } else if (e.key === '+' || e.key === '=') {
+      const r = els.svg.getBoundingClientRect();
+      zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.2);
+      e.preventDefault();
+      return;
+    } else if (e.key === '-') {
+      const r = els.svg.getBoundingClientRect();
+      zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.2);
+      e.preventDefault();
+      return;
+    } else if (e.key === '0') { fitToScreen(); e.preventDefault(); return; }
+    if (next) {
+      state.focusId = next;
+      selectNode(next, true);
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener('resize', debounce(function () {
+    if (state.layout) fitToScreen();
+  }, 250));
+}
+
+function distance(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
+function debounce(fn, ms) {
+  let id = null;
+  return function () {
+    const args = arguments, self = this;
+    clearTimeout(id);
+    id = setTimeout(function () { fn.apply(self, args); }, ms);
+  };
+}
+function flash(button, text) {
+  const old = button.textContent;
+  button.textContent = text;
+  setTimeout(function () { button.textContent = old; }, 1400);
+}
+
+/* ------------------------------------------------- 18. theme / language */
+function setTheme(value) {
+  state.theme = value;
+  document.documentElement.setAttribute('data-theme', value);
+  els.theme.value = value;
+}
+function setLang(value) {
+  lang = (I18N[value] ? value : 'en');
+  document.documentElement.setAttribute('lang', lang);
+  els.lang.value = lang;
+  applyI18n();
+  if (state.model) { renderHealth(); renderDetails(); }
+  updatePlaybackUI();
+}
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(function (n) { n.textContent = t(n.getAttribute('data-i18n')); });
+  document.querySelectorAll('[data-i18n-ph]').forEach(function (n) { n.setAttribute('placeholder', t(n.getAttribute('data-i18n-ph'))); });
+  document.title = t('appTitle');
+}
+
+/* --------------------------------------------------------------- 19. init */
+function cacheEls() {
+  ['svg', 'empty', 'input', 'errors', 'verdict', 'blocking', 'health', 'theme', 'lang',
+   'btn-render', 'btn-upload', 'file', 'example', 'btn-down', 'btn-up', 'btn-show-all',
+   'btn-play', 'btn-step-back', 'btn-step-fwd', 'speed', 'play-status', 'btn-zoom-in',
+   'btn-zoom-out', 'btn-fit', 'zoom-badge', 'btn-expand', 'btn-copy', 'btn-download',
+   'btn-svg', 'btn-png', 'details-body'].forEach(function (id) {
+    els[camel(id)] = $(id);
+  });
+  els.countVerified = $('count-verified');
+  els.countUnverified = $('count-unverified');
+  els.countFailed = $('count-failed');
+  els.countRc = $('count-rc');
+}
+function camel(id) {
+  return id.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+}
+
+function init() {
+  cacheEls();
+  wireEvents();
+
+  const session = loadSession();
+  if (session) {
+    if (session.theme) setTheme(session.theme);
+    if (session.lang) setLang(session.lang);
+    if (Array.isArray(session.collapsed)) state.collapsed = new Set(session.collapsed);
+  } else {
+    setTheme('auto');
+    setLang(document.documentElement.getAttribute('lang') === 'vi' ? 'vi' : 'en');
+  }
+
+  let startText = session && session.json ? session.json : '';
+  if (!startText && window.TREE_EXAMPLES && window.TREE_EXAMPLES.general) {
+    startText = JSON.stringify(window.TREE_EXAMPLES.general, null, 2);
+  }
+  if (startText) {
+    els.input.value = startText;
+    renderFromText(startText);
+  }
+  applyI18n();
+  updatePlaybackUI();
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
+````
+
+## `visualizer/README.md`
+
+````markdown
+# tree-json visualizer
+
+Static viewer for the `tree-json` reasoning trees emitted by the four skills in this
+suite. Plain HTML + CSS + vanilla JS: no build step, no framework, no backend, no
+network calls at runtime.
+
+## Files
+```
+visualizer/
+├── index.html          structure + i18n hooks
+├── style.css           light/dark tokens, layout, status colours + patterns
+├── app.js              parse, validate, status, layout, render, playback, edit, export
+├── examples/
+│   ├── general.json    all-green tree (READY)
+│   ├── debug.json      failed leaf + check fail/gap (NOT READY)
+│   ├── code.json       reverse-check gap with all leaves verified (NOT READY)
+│   ├── web.json        deeply nested tree (depth 5) with one unverified leaf
+│   └── data.js         the same four examples, embedded for offline use
+└── README.md
+```
+
+## Run
+- Double-click `index.html` (offline-ready: examples load from `examples/data.js`
+  because browsers block `fetch()` on `file://`).
+- Or serve the folder: `python -m http.server 8080` then open `http://localhost:8080`.
+  Serving also lets the file-upload button read `.json` files directly.
+
+## Deploy
+Static hosting only: GitHub Pages (publish this folder), Netlify drop, Vercel
+(`framework: Other`, no build command), Cloudflare Pages. Total size is well under
+150 KB and nothing is fetched at runtime.
+
+## Use
+1. Paste a `tree-json` block or a whole markdown answer (the block is extracted
+   automatically), press **Render**. Or load an example / upload a `.json` file.
+2. Validation errors list the exact node path and the failed rule (same rules as
+   `../tree.schema.json`), for example `root.children[1].children[0] - leaf missing
+   evidence [leafEvidence]`.
+3. Read the health bar: leaves verified / unverified / failed, number of check
+   fails+gaps, and READY / NOT READY. Blocking chips are clickable and jump to the node.
+4. Playback: **DOWN** reveals root -> branches -> leaves, **UP** walks the
+   `reverse_check` entries (highlighting each target) and then propagates the computed
+   status upward, deepest level first. Play/pause, step forward/back, speed slider,
+   Show all to exit. `prefers-reduced-motion` disables all animation.
+5. Inspect: click a node for text, evidence, status and the checks targeting it.
+   Double-click to edit; add a child (max 4) or delete a sub-tree. Edits update the
+   JSON in the textarea live.
+6. Export/copy: Copy JSON, Download JSON, Export SVG, Export PNG (current view,
+   `viewBox` fitted to the tree).
+7. Keyboard: Tab into the tree, arrows move (up = parent, down = first child,
+   left/right = siblings), Enter opens details, Space collapses/expands, `+`/`-` zoom,
+   `0` fits to screen.
+8. Session (JSON, language, theme, collapsed nodes) is restored from `localStorage`
+   inside `try/catch`; with storage disabled the page still works.
+
+## Status model (computed, never stored)
+| Node | Rule |
+|---|---|
+| leaf | `verified` green, `unverified` amber, `failed` red |
+| branch / root | red if ANY child is red, green only if ALL children are green, else amber |
+
+Colour is never the only signal: each status also has an icon (✓ ? ✕ ○) and a stroke
+pattern (solid / dashed / dotted), so the tree stays readable for colour-blind users.
+
+**READY** requires every leaf verified and zero `reverse_check` entries with
+`fail`/`gap`. Otherwise the bar lists the blocking nodes.
+
+## Editing notes
+- A new child starts as a leaf with `status: "unverified"` and a `TODO` evidence line,
+  so it is schema-valid and visibly blocks the verdict until you replace the evidence.
+- Adding a child to a leaf turns it into a branch (its `evidence`/`status` stay in the
+  JSON but are ignored, exactly as the schema specifies).
+- Deleting a node also drops the `reverse_check` entries that targeted the removed
+  sub-tree.
+- Maximum 4 children per node; the Add-child button disables at the limit.
+
+## i18n
+UI text lives in the `I18N` object at the top of `app.js` (`en` and `vi` complete).
+Add a language by copying the `en` keys under a new code; no other change is needed.
+The `vi` entries are authored with numeric HTML entities so `app.js` stays ASCII; the
+loader decodes them once at startup (own strings only, never user data), so plain
+UTF-8 text also works if you prefer to write it directly.
+
+## Safety
+No `eval`, no `innerHTML`: every piece of user text goes through `textContent` or
+`createElementNS`, so a node text like `<img src=x onerror=alert(1)>` renders as
+literal characters. Uploaded files are read locally with `FileReader`; nothing is sent
+anywhere.
+
+## Limits and known scope
+- Layout is a deterministic tidy-tree: no overlap up to ~100 visible nodes; beyond that
+  use collapse or zoom. Fit-to-screen scales down to 8%.
+- PNG export uses an SVG data URL + canvas (no external images, so the canvas is never
+  tainted). Fonts fall back to the system sans-serif in exports.
+- Print/PDF is out of scope; use Export PNG/SVG.
+````
+
+## `visualizer/examples/general.json`
+
+````json
+{
+  "version": 1,
+  "domain": "general",
+  "title": "Ship the CSV export behind a feature flag?",
+  "root": {
+    "id": "r",
+    "text": "decide flag vs direct release for the CSV export",
+    "children": [
+      {
+        "id": "b1",
+        "text": "blast radius if the export is wrong",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "export reads rows only, never writes",
+            "evidence": "src/export.py:41 - no INSERT/UPDATE in the module",
+            "status": "verified"
+          },
+          {
+            "id": "b1-l2",
+            "text": "bad output is user-visible but recoverable by re-export",
+            "evidence": "manual: re-export after fix produced the correct file",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "cost of the feature flag",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "flag costs 2 files, 6 lines",
+            "evidence": "config/features.yaml + route guard diff (git show --stat)",
+            "status": "verified"
+          },
+          {
+            "id": "b2-l2",
+            "text": "rollback without deploy",
+            "evidence": "flag read per request; config reload observed in staging",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "current correctness evidence",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "export tests pass on the 3 existing fixtures",
+            "evidence": "pytest -q tests/test_export.py -> 3 passed",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "empty-table fixture added during the UP pass",
+            "evidence": "pytest -q tests/test_export.py -> test_empty_table passed",
+            "status": "verified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "does the leaf prove there are no writes?",
+      "result": "pass",
+      "note": "module read end to end"
+    },
+    {
+      "target": "b2-l1",
+      "question": "is the flag cost complete?",
+      "result": "pass",
+      "note": "diff measured, not estimated"
+    },
+    {
+      "target": "b3",
+      "question": "was the empty-table gap closed before concluding?",
+      "result": "pass",
+      "note": "fixture added and re-run during UP"
+    }
+  ],
+  "conclusion": "Ship behind the flag: 6 lines, instant rollback, and the empty-table gap was closed during the UP pass."
+}
+````
+
+## `visualizer/examples/debug.json`
+
+````json
+{
+  "version": 1,
+  "domain": "debug",
+  "title": "test_cancel fails only in the full suite",
+  "root": {
+    "id": "r",
+    "text": "stop test_cancel failing in the full suite on CI (~2 of 10 runs)",
+    "children": [
+      {
+        "id": "b1",
+        "text": "test isolation / order dependency",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "order matters: test_a leaks a row into the session",
+            "evidence": "pytest test_a test_orders -> fails; reversed order -> passes",
+            "status": "verified"
+          },
+          {
+            "id": "b1-l2",
+            "text": "session-scoped db fixture is never reset",
+            "evidence": "conftest.py:12 scope=\"session\" with no teardown",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "xdist / version difference",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "B2 is dead: failure reproduces with xdist disabled",
+            "evidence": "pytest -p no:xdist full suite -> same assertion at line 44",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "fix: order-independent cleanup",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "cleanup added in test_a - suite still fails",
+            "evidence": "CI run 8412: 2 failed, same AssertionError at test_orders.py:44",
+            "status": "failed"
+          },
+          {
+            "id": "b3-l2",
+            "text": "function-scoped fixture rewrite still untested on CI",
+            "evidence": "patch prepared locally, not pushed",
+            "status": "unverified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "does order genuinely explain the failure?",
+      "result": "pass",
+      "note": "reproduced both orders"
+    },
+    {
+      "target": "b2-l1",
+      "question": "is parallelism ruled out?",
+      "result": "pass",
+      "note": "fails with xdist off"
+    },
+    {
+      "target": "b3-l1",
+      "question": "does the applied fix clear the repro?",
+      "result": "fail",
+      "note": "CI still red: cleanup in one test is not enough, the fixture itself leaks"
+    },
+    {
+      "target": "b3",
+      "question": "does any leaf explain the whole symptom?",
+      "result": "gap",
+      "note": "no leaf yet proves the fixture rewrite removes the failure"
+    }
+  ],
+  "conclusion": ""
+}
+````
+
+## `visualizer/examples/code.json`
+
+````json
+{
+  "version": 1,
+  "domain": "code",
+  "title": "CSV import endpoint",
+  "root": {
+    "id": "r",
+    "text": "add POST /import for order CSV files, meeting C1-C4",
+    "children": [
+      {
+        "id": "b1",
+        "text": "interface and error shape",
+        "children": [
+          {
+            "id": "b1-l1",
+            "text": "responses match api/schemas.py conventions",
+            "evidence": "schema review against C1; 202 {job_id} on success",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "core parsing and persistence",
+        "children": [
+          {
+            "id": "b2-l1",
+            "text": "5k-row fixture imports and row count matches",
+            "evidence": "pytest -q tests/test_import.py -k happy -> passed; DB count 5000",
+            "status": "verified"
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "error and edge handling",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "missing file and wrong delimiter return 400 with row number",
+            "evidence": "test_missing_file, test_wrong_delimiter -> passed",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "duplicate order ids are rejected at row level",
+            "evidence": "test_duplicate_rows -> 400, row 7 reported",
+            "status": "verified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-l1",
+      "question": "C1: success shape matches the API conventions?",
+      "result": "pass",
+      "note": "reviewed against existing handlers"
+    },
+    {
+      "target": "b2-l1",
+      "question": "C2: a real file imports end to end?",
+      "result": "pass",
+      "note": "5k rows, count verified in DB"
+    },
+    {
+      "target": "b3-l1",
+      "question": "C3: malformed input rejected with a row number?",
+      "result": "pass",
+      "note": "two failing tests green"
+    },
+    {
+      "target": "b3",
+      "question": "C4: is the 1M-row / memory budget covered?",
+      "result": "gap",
+      "note": "no leaf measures large-file throughput; only a 5k-row fixture exists"
+    }
+  ],
+  "conclusion": ""
+}
+````
+
+## `visualizer/examples/web.json`
+
+````json
+{
+  "version": 1,
+  "domain": "web",
+  "title": "Checkout flow with saved cards",
+  "root": {
+    "id": "r",
+    "text": "a logged-in user can pay with a saved card and reach the confirmation",
+    "children": [
+      {
+        "id": "b1",
+        "text": "cart and pricing",
+        "children": [
+          {
+            "id": "b1-1",
+            "text": "line items persist across the flow",
+            "children": [
+              {
+                "id": "b1-1-1",
+                "text": "cart state survives refresh and the 3DS round trip",
+                "children": [
+                  {
+                    "id": "b1-1-1-l1",
+                    "text": "server-side cart keyed by session, not localStorage",
+                    "evidence": "GET /api/cart after refresh returns the same 3 items",
+                    "status": "verified"
+                  },
+                  {
+                    "id": "b1-1-1-l2",
+                    "text": "price is recomputed server-side before charge",
+                    "evidence": "curl with tampered client total -> server total used (order 8812)",
+                    "status": "verified"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "b2",
+        "text": "payment",
+        "children": [
+          {
+            "id": "b2-1",
+            "text": "3DS redirect return",
+            "children": [
+              {
+                "id": "b2-1-l1",
+                "text": "return URL restores the flow and does not resubmit",
+                "evidence": "manual walk: redirect back to /checkout/return, single charge (provider dashboard)",
+                "status": "verified"
+              },
+              {
+                "id": "b2-1-l2",
+                "text": "webhook is the source of truth for paid",
+                "evidence": "provider webhook replayed -> order marked paid once, idempotency key honored",
+                "status": "verified"
+              }
+            ]
+          },
+          {
+            "id": "b2-2",
+            "text": "saved cards",
+            "children": [
+              {
+                "id": "b2-2-l1",
+                "text": "another user's card id is rejected",
+                "evidence": "curl DELETE /api/cards/<other-id> -> 404, row unchanged",
+                "status": "verified"
+              },
+              {
+                "id": "b2-2-l2",
+                "text": "double submit never charges twice",
+                "evidence": "two rapid POSTs with the same idempotency key -> one charge, second 200 replay",
+                "status": "verified"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "b3",
+        "text": "mobile and states",
+        "children": [
+          {
+            "id": "b3-l1",
+            "text": "375px layout keeps the pay button reachable",
+            "evidence": "manual render at 375px, screenshot",
+            "status": "verified"
+          },
+          {
+            "id": "b3-l2",
+            "text": "card list loading / error / empty states",
+            "evidence": "loading and empty observed; error state not yet forced",
+            "status": "unverified"
+          }
+        ]
+      }
+    ]
+  },
+  "reverse_check": [
+    {
+      "target": "b1-1-1-l2",
+      "question": "can the client influence the amount charged?",
+      "result": "pass",
+      "note": "tampered total ignored"
+    },
+    {
+      "target": "b2-2-l1",
+      "question": "is card authorization enforced server-side per resource?",
+      "result": "pass",
+      "note": "cross-user id returns 404"
+    },
+    {
+      "target": "b2-1-l2",
+      "question": "is confirmation derived from the webhook, not the redirect?",
+      "result": "pass",
+      "note": "replay marks paid exactly once"
+    },
+    {
+      "target": "b3-l2",
+      "question": "does every data surface handle loading, error and empty?",
+      "result": "gap",
+      "note": "error state on the card list was never forced"
+    }
+  ],
+  "conclusion": ""
+}
+````
+
+## `visualizer/examples/data.js`
+
+````javascript
+/* Generated from examples/*.json - do not edit by hand.
+   Loaded as a classic script so the page works from file:// with no fetch(). */
+window.TREE_EXAMPLES = {
+  "general": {
+    "version": 1,
+    "domain": "general",
+    "title": "Ship the CSV export behind a feature flag?",
+    "root": {
+      "id": "r",
+      "text": "decide flag vs direct release for the CSV export",
+      "children": [
+        {
+          "id": "b1",
+          "text": "blast radius if the export is wrong",
+          "children": [
+            {
+              "id": "b1-l1",
+              "text": "export reads rows only, never writes",
+              "evidence": "src/export.py:41 - no INSERT/UPDATE in the module",
+              "status": "verified"
+            },
+            {
+              "id": "b1-l2",
+              "text": "bad output is user-visible but recoverable by re-export",
+              "evidence": "manual: re-export after fix produced the correct file",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b2",
+          "text": "cost of the feature flag",
+          "children": [
+            {
+              "id": "b2-l1",
+              "text": "flag costs 2 files, 6 lines",
+              "evidence": "config/features.yaml + route guard diff (git show --stat)",
+              "status": "verified"
+            },
+            {
+              "id": "b2-l2",
+              "text": "rollback without deploy",
+              "evidence": "flag read per request; config reload observed in staging",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b3",
+          "text": "current correctness evidence",
+          "children": [
+            {
+              "id": "b3-l1",
+              "text": "export tests pass on the 3 existing fixtures",
+              "evidence": "pytest -q tests/test_export.py -> 3 passed",
+              "status": "verified"
+            },
+            {
+              "id": "b3-l2",
+              "text": "empty-table fixture added during the UP pass",
+              "evidence": "pytest -q tests/test_export.py -> test_empty_table passed",
+              "status": "verified"
+            }
+          ]
+        }
+      ]
+    },
+    "reverse_check": [
+      {
+        "target": "b1-l1",
+        "question": "does the leaf prove there are no writes?",
+        "result": "pass",
+        "note": "module read end to end"
+      },
+      {
+        "target": "b2-l1",
+        "question": "is the flag cost complete?",
+        "result": "pass",
+        "note": "diff measured, not estimated"
+      },
+      {
+        "target": "b3",
+        "question": "was the empty-table gap closed before concluding?",
+        "result": "pass",
+        "note": "fixture added and re-run during UP"
+      }
+    ],
+    "conclusion": "Ship behind the flag: 6 lines, instant rollback, and the empty-table gap was closed during the UP pass."
+  },
+  "debug": {
+    "version": 1,
+    "domain": "debug",
+    "title": "test_cancel fails only in the full suite",
+    "root": {
+      "id": "r",
+      "text": "stop test_cancel failing in the full suite on CI (~2 of 10 runs)",
+      "children": [
+        {
+          "id": "b1",
+          "text": "test isolation / order dependency",
+          "children": [
+            {
+              "id": "b1-l1",
+              "text": "order matters: test_a leaks a row into the session",
+              "evidence": "pytest test_a test_orders -> fails; reversed order -> passes",
+              "status": "verified"
+            },
+            {
+              "id": "b1-l2",
+              "text": "session-scoped db fixture is never reset",
+              "evidence": "conftest.py:12 scope=\"session\" with no teardown",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b2",
+          "text": "xdist / version difference",
+          "children": [
+            {
+              "id": "b2-l1",
+              "text": "B2 is dead: failure reproduces with xdist disabled",
+              "evidence": "pytest -p no:xdist full suite -> same assertion at line 44",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b3",
+          "text": "fix: order-independent cleanup",
+          "children": [
+            {
+              "id": "b3-l1",
+              "text": "cleanup added in test_a - suite still fails",
+              "evidence": "CI run 8412: 2 failed, same AssertionError at test_orders.py:44",
+              "status": "failed"
+            },
+            {
+              "id": "b3-l2",
+              "text": "function-scoped fixture rewrite still untested on CI",
+              "evidence": "patch prepared locally, not pushed",
+              "status": "unverified"
+            }
+          ]
+        }
+      ]
+    },
+    "reverse_check": [
+      {
+        "target": "b1-l1",
+        "question": "does order genuinely explain the failure?",
+        "result": "pass",
+        "note": "reproduced both orders"
+      },
+      {
+        "target": "b2-l1",
+        "question": "is parallelism ruled out?",
+        "result": "pass",
+        "note": "fails with xdist off"
+      },
+      {
+        "target": "b3-l1",
+        "question": "does the applied fix clear the repro?",
+        "result": "fail",
+        "note": "CI still red: cleanup in one test is not enough, the fixture itself leaks"
+      },
+      {
+        "target": "b3",
+        "question": "does any leaf explain the whole symptom?",
+        "result": "gap",
+        "note": "no leaf yet proves the fixture rewrite removes the failure"
+      }
+    ],
+    "conclusion": ""
+  },
+  "code": {
+    "version": 1,
+    "domain": "code",
+    "title": "CSV import endpoint",
+    "root": {
+      "id": "r",
+      "text": "add POST /import for order CSV files, meeting C1-C4",
+      "children": [
+        {
+          "id": "b1",
+          "text": "interface and error shape",
+          "children": [
+            {
+              "id": "b1-l1",
+              "text": "responses match api/schemas.py conventions",
+              "evidence": "schema review against C1; 202 {job_id} on success",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b2",
+          "text": "core parsing and persistence",
+          "children": [
+            {
+              "id": "b2-l1",
+              "text": "5k-row fixture imports and row count matches",
+              "evidence": "pytest -q tests/test_import.py -k happy -> passed; DB count 5000",
+              "status": "verified"
+            }
+          ]
+        },
+        {
+          "id": "b3",
+          "text": "error and edge handling",
+          "children": [
+            {
+              "id": "b3-l1",
+              "text": "missing file and wrong delimiter return 400 with row number",
+              "evidence": "test_missing_file, test_wrong_delimiter -> passed",
+              "status": "verified"
+            },
+            {
+              "id": "b3-l2",
+              "text": "duplicate order ids are rejected at row level",
+              "evidence": "test_duplicate_rows -> 400, row 7 reported",
+              "status": "verified"
+            }
+          ]
+        }
+      ]
+    },
+    "reverse_check": [
+      {
+        "target": "b1-l1",
+        "question": "C1: success shape matches the API conventions?",
+        "result": "pass",
+        "note": "reviewed against existing handlers"
+      },
+      {
+        "target": "b2-l1",
+        "question": "C2: a real file imports end to end?",
+        "result": "pass",
+        "note": "5k rows, count verified in DB"
+      },
+      {
+        "target": "b3-l1",
+        "question": "C3: malformed input rejected with a row number?",
+        "result": "pass",
+        "note": "two failing tests green"
+      },
+      {
+        "target": "b3",
+        "question": "C4: is the 1M-row / memory budget covered?",
+        "result": "gap",
+        "note": "no leaf measures large-file throughput; only a 5k-row fixture exists"
+      }
+    ],
+    "conclusion": ""
+  },
+  "web": {
+    "version": 1,
+    "domain": "web",
+    "title": "Checkout flow with saved cards",
+    "root": {
+      "id": "r",
+      "text": "a logged-in user can pay with a saved card and reach the confirmation",
+      "children": [
+        {
+          "id": "b1",
+          "text": "cart and pricing",
+          "children": [
+            {
+              "id": "b1-1",
+              "text": "line items persist across the flow",
+              "children": [
+                {
+                  "id": "b1-1-1",
+                  "text": "cart state survives refresh and the 3DS round trip",
+                  "children": [
+                    {
+                      "id": "b1-1-1-l1",
+                      "text": "server-side cart keyed by session, not localStorage",
+                      "evidence": "GET /api/cart after refresh returns the same 3 items",
+                      "status": "verified"
+                    },
+                    {
+                      "id": "b1-1-1-l2",
+                      "text": "price is recomputed server-side before charge",
+                      "evidence": "curl with tampered client total -> server total used (order 8812)",
+                      "status": "verified"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b2",
+          "text": "payment",
+          "children": [
+            {
+              "id": "b2-1",
+              "text": "3DS redirect return",
+              "children": [
+                {
+                  "id": "b2-1-l1",
+                  "text": "return URL restores the flow and does not resubmit",
+                  "evidence": "manual walk: redirect back to /checkout/return, single charge (provider dashboard)",
+                  "status": "verified"
+                },
+                {
+                  "id": "b2-1-l2",
+                  "text": "webhook is the source of truth for paid",
+                  "evidence": "provider webhook replayed -> order marked paid once, idempotency key honored",
+                  "status": "verified"
+                }
+              ]
+            },
+            {
+              "id": "b2-2",
+              "text": "saved cards",
+              "children": [
+                {
+                  "id": "b2-2-l1",
+                  "text": "another user's card id is rejected",
+                  "evidence": "curl DELETE /api/cards/<other-id> -> 404, row unchanged",
+                  "status": "verified"
+                },
+                {
+                  "id": "b2-2-l2",
+                  "text": "double submit never charges twice",
+                  "evidence": "two rapid POSTs with the same idempotency key -> one charge, second 200 replay",
+                  "status": "verified"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b3",
+          "text": "mobile and states",
+          "children": [
+            {
+              "id": "b3-l1",
+              "text": "375px layout keeps the pay button reachable",
+              "evidence": "manual render at 375px, screenshot",
+              "status": "verified"
+            },
+            {
+              "id": "b3-l2",
+              "text": "card list loading / error / empty states",
+              "evidence": "loading and empty observed; error state not yet forced",
+              "status": "unverified"
+            }
+          ]
+        }
+      ]
+    },
+    "reverse_check": [
+      {
+        "target": "b1-1-1-l2",
+        "question": "can the client influence the amount charged?",
+        "result": "pass",
+        "note": "tampered total ignored"
+      },
+      {
+        "target": "b2-2-l1",
+        "question": "is card authorization enforced server-side per resource?",
+        "result": "pass",
+        "note": "cross-user id returns 404"
+      },
+      {
+        "target": "b2-1-l2",
+        "question": "is confirmation derived from the webhook, not the redirect?",
+        "result": "pass",
+        "note": "replay marks paid exactly once"
+      },
+      {
+        "target": "b3-l2",
+        "question": "does every data surface handle loading, error and empty?",
+        "result": "gap",
+        "note": "error state on the card list was never forced"
+      }
+    ],
+    "conclusion": ""
+  }
+};
+````
+
+## File inventory
+
+| path | bytes |
+|---|---|
+| `tree.schema.json` | 2460 |
+| `README.md` | 4047 |
+| `TEST-PLAN.md` | 25598 |
+| `1-general/SKILL.md` | 5598 |
+| `1-general/references/tree-reasoning.md` | 3088 |
+| `1-general/references/reverse-check.md` | 2209 |
+| `1-general/references/tree-format.md` | 5071 |
+| `1-general/references/examples-good.md` | 4506 |
+| `1-general/references/examples-bad.md` | 2210 |
+| `2-debug/SKILL.md` | 6714 |
+| `2-debug/references/hypothesis-patterns.md` | 3249 |
+| `2-debug/references/examples.md` | 4064 |
+| `3-code/SKILL.md` | 6635 |
+| `3-code/references/decomposition-patterns.md` | 3161 |
+| `3-code/references/examples.md` | 4042 |
+| `4-web/SKILL.md` | 6696 |
+| `4-web/references/web-branches.md` | 3065 |
+| `4-web/references/examples.md` | 4514 |
+| `visualizer/index.html` | 6599 |
+| `visualizer/style.css` | 8550 |
+| `visualizer/app.js` | 56049 |
+| `visualizer/README.md` | 5000 |
+| `visualizer/examples/general.json` | 2581 |
+| `visualizer/examples/debug.json` | 2528 |
+| `visualizer/examples/code.json` | 2246 |
+| `visualizer/examples/web.json` | 4053 |
+| `visualizer/examples/data.js` | 12372 |
+| **total** | **196905** |
